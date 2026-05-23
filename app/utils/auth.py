@@ -1,23 +1,20 @@
 from datetime import datetime, timedelta
 from typing import Optional, Union
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from fastapi import Response
 from app.config import settings
 from app.models.user import User, UserRole
 
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash."""
-    return pwd_context.verify(plain_password, hashed_password)
+    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
 
 
 def get_password_hash(password: str) -> str:
     """Hash a password."""
-    return pwd_context.hash(password)
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
@@ -27,12 +24,12 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         expire = datetime.utcnow() + expires_delta
     else:
         expire = datetime.utcnow() + timedelta(
-            minutes=settings.access_token_expire_minutes
+            minutes=settings.jwt.access_token_expire_minutes
         )
 
     to_encode.update({"exp": expire, "type": "access"})
     encoded_jwt = jwt.encode(
-        to_encode, settings.jwt_secret, algorithm=settings.jwt_algorithm
+        to_encode, settings.jwt.jwt_secret, algorithm=settings.jwt.jwt_algorithm
     )
     return encoded_jwt
 
@@ -40,10 +37,10 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 def create_refresh_token(data: dict) -> str:
     """Create a refresh token."""
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(days=settings.refresh_token_expire_days)
+    expire = datetime.utcnow() + timedelta(days=settings.jwt.refresh_token_expire_days)
     to_encode.update({"exp": expire, "type": "refresh"})
     encoded_jwt = jwt.encode(
-        to_encode, settings.jwt_refresh_secret, algorithm=settings.jwt_algorithm
+        to_encode, settings.jwt.jwt_refresh_secret, algorithm=settings.jwt.jwt_algorithm
     )
     return encoded_jwt
 
@@ -51,7 +48,7 @@ def create_refresh_token(data: dict) -> str:
 def verify_token(token: str, secret: str) -> Optional[dict]:
     """Verify a JWT token."""
     try:
-        payload = jwt.decode(token, secret, algorithms=[settings.jwt_algorithm])
+        payload = jwt.decode(token, secret, algorithms=[settings.jwt.jwt_algorithm])
         return payload
     except JWTError:
         return None
@@ -59,7 +56,7 @@ def verify_token(token: str, secret: str) -> Optional[dict]:
 
 def get_current_user_payload(token: str) -> Optional[dict]:
     """Get current user from access token."""
-    payload = verify_token(token, settings.jwt_secret)
+    payload = verify_token(token, settings.jwt.jwt_secret)
     if payload and payload.get("type") == "access":
         return payload
     return None
@@ -67,7 +64,7 @@ def get_current_user_payload(token: str) -> Optional[dict]:
 
 def get_user_from_refresh_token(token: str) -> Optional[dict]:
     """Get user from refresh token."""
-    payload = verify_token(token, settings.jwt_refresh_secret)
+    payload = verify_token(token, settings.jwt.jwt_refresh_secret)
     if payload and payload.get("type") == "refresh":
         return payload
     return None
@@ -78,13 +75,13 @@ def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
     """Set authentication cookies with environment-appropriate security settings."""
     # Determine security settings based on environment
     secure = True  # Use HTTPS in production
-    samesite = "strict" if settings.is_production else "lax"  # Stricter in production
-    
+    samesite = "strict" if settings.server.is_production else "lax"  # Stricter in production
+
     # Access token cookie (short-lived)
     response.set_cookie(
         key="access_token",
         value=access_token,
-        max_age=settings.access_token_expire_minutes * 60,  # Convert to seconds
+        max_age=settings.jwt.access_token_expire_minutes * 60,  # Convert to seconds
         httponly=True,
         secure=secure,
         samesite=samesite,
@@ -95,7 +92,7 @@ def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,
-        max_age=settings.refresh_token_expire_days * 24 * 60 * 60,  # Convert to seconds
+        max_age=settings.jwt.refresh_token_expire_days * 24 * 60 * 60,  # Convert to seconds
         httponly=True,
         secure=secure,
         samesite=samesite,

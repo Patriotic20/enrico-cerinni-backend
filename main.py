@@ -1,8 +1,4 @@
 import uvicorn
-from app.main import app
-from app.config import settings
-
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -34,13 +30,14 @@ app = FastAPI(
 )
 
 # Add CORS middleware with cookie support for local and LAN development
-allowed_origins = [origin.strip() for origin in settings.cors_origin.split(",") if origin.strip()] + ["https://enrico.uz"]
+# allowed_origins = [origin.strip() for origin in settings.cors_origin.split(",") if origin.strip()] + ["https://enrico.uz"]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    # allow_origins=allowed_origins,
+    allow_origins=["http://localhost:3000"],
     # Allow any LAN IP like http://192.168.x.x:3000 or http://10.x.x.x:3000 (and other ports)
-    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1|(10|172\.(1[6-9]|2[0-9]|3[0-1])|192\.168)(?:\.\d{1,3}){1,2})(?::\d+)?$",
+    # allow_origin_regex=r"^http://(localhost|127\.0\.0\.1|(10|172\.(1[6-9]|2[0-9]|3[0-1])|192\.168)(?:\.\d{1,3}){1,2})(?::\d+)?$",
     allow_credentials=True,  # Required for cookies
     allow_methods=["*"],
     allow_headers=["*"],
@@ -118,5 +115,8 @@ async def root():
 
 if __name__ == "__main__":
     uvicorn.run(
-        "app.main:app", host=settings.host, port=settings.port, reload=settings.debug
+        "main:app",
+        host=settings.server.host,
+        port=settings.server.port,
+        reload=settings.server.debug,
     )

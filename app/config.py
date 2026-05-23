@@ -76,12 +76,13 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    database: DatabaseConfig = DatabaseConfig()
+    database: DatabaseConfig
     jwt: JwtConfig = JwtConfig()
     server: ServerConfig = ServerConfig()
     security: SecurityConfig = SecurityConfig()
     rate_limit: RateLimitConfig = RateLimitConfig()
     notification: NotificationConfig = NotificationConfig()
+    cors_origin: str = "http://localhost:3001"
 
 
 settings = Settings()

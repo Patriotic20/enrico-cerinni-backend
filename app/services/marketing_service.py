@@ -19,9 +19,9 @@ class MarketingService:
         return query.all()
 
     async def _send_telegram_message(self, chat_id: str, text: str) -> bool:
-        if not settings.telegram_bot_token:
+        if not settings.notification.telegram_bot_token:
             return False
-        url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
+        url = f"https://api.telegram.org/bot{settings.notification.telegram_bot_token}/sendMessage"
         async with httpx.AsyncClient(timeout=10) as client:
             try:
                 resp = await client.post(url, json={"chat_id": chat_id, "text": text})
@@ -31,13 +31,13 @@ class MarketingService:
 
     async def _send_sms_message(self, phone: str, text: str) -> bool:
         # Placeholder generic HTTP provider. Expect environment variables to configure
-        if not settings.sms_base_url or not settings.sms_api_key:
+        if not settings.notification.sms_base_url or not settings.notification.sms_api_key:
             return False
-        headers = {"Authorization": f"Bearer {settings.sms_api_key}"}
-        payload = {"to": phone, "from": settings.sms_from_number, "message": text}
+        headers = {"Authorization": f"Bearer {settings.notification.sms_api_key}"}
+        payload = {"to": phone, "from": settings.notification.sms_from_number, "message": text}
         async with httpx.AsyncClient(timeout=10) as client:
             try:
-                resp = await client.post(settings.sms_base_url.rstrip("/") + "/send", json=payload, headers=headers)
+                resp = await client.post(settings.notification.sms_base_url.rstrip("/") + "/send", json=payload, headers=headers)
                 return 200 <= resp.status_code < 300
             except Exception:
                 return False
