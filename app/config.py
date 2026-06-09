@@ -7,8 +7,7 @@ load_dotenv()
 
 
 class DatabaseConfig(BaseModel):
-    # Явно указываем через Field(validation_alias=...), 
-    # что это поле может наполняться напрямую из стандартной переменной DATABASE_URL
+    # Прямая связь со стандартной переменной Railway
     database_url: str = Field(validation_alias="DATABASE_URL")
 
     @property
@@ -29,7 +28,7 @@ class JwtConfig(BaseModel):
 
 
 class ServerConfig(BaseModel):
-    # Связываем поле port со стандартной переменной PORT от Railway
+    # Прямая связь со стандартным портом Railway
     port: int = Field(default=8000, validation_alias="PORT")
     host: str = "0.0.0.0"
     debug: bool = True
@@ -74,11 +73,11 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         case_sensitive=False,
-        env_nested_delimiter="__",  # Сохраняем для локальной настройки других вложенных полей
+        env_nested_delimiter="__",  # ОСТАВЛЯЕМ, чтобы работали вложенные переменные
         extra="ignore",
     )
 
-    # Задаем дефолтные фабрики, чтобы Pydantic инициализировал вложенные модели автоматически
+    # Автоматическая сборка объектов при старте
     database: DatabaseConfig = Field(default_factory=lambda: DatabaseConfig.model_validate({}))
     jwt: JwtConfig = Field(default_factory=JwtConfig)
     server: ServerConfig = Field(default_factory=lambda: ServerConfig.model_validate({}))
