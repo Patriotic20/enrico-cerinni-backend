@@ -1,13 +1,15 @@
 from typing import Optional
 from dotenv import load_dotenv
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 load_dotenv()
 
 
 class DatabaseConfig(BaseModel):
-    database_url: str
+    # Явно указываем через Field(validation_alias=...), 
+    # что это поле может наполняться напрямую из стандартной переменной DATABASE_URL
+    database_url: str = Field(validation_alias="DATABASE_URL")
 
     @property
     def sync_database_url(self) -> str:
@@ -27,7 +29,8 @@ class JwtConfig(BaseModel):
 
 
 class ServerConfig(BaseModel):
-    port: int = 8000
+    # Связываем поле port со стандартной переменной PORT от Railway
+    port: int = Field(default=8000, validation_alias="PORT")
     host: str = "0.0.0.0"
     debug: bool = True
     environment: str = "development"  # development, staging, production
@@ -71,17 +74,17 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         case_sensitive=False,
-        env_nested_delimiter="__",
-        env_prefix="APP_CONFIG__",
+        env_nested_delimiter="__",  # Сохраняем для локальной настройки других вложенных полей
         extra="ignore",
     )
 
-    database: DatabaseConfig
-    jwt: JwtConfig = JwtConfig()
-    server: ServerConfig = ServerConfig()
-    security: SecurityConfig = SecurityConfig()
-    rate_limit: RateLimitConfig = RateLimitConfig()
-    notification: NotificationConfig = NotificationConfig()
+    # Задаем дефолтные фабрики, чтобы Pydantic инициализировал вложенные модели автоматически
+    database: DatabaseConfig = Field(default_factory=lambda: DatabaseConfig.model_validate({}))
+    jwt: JwtConfig = Field(default_factory=JwtConfig)
+    server: ServerConfig = Field(default_factory=lambda: ServerConfig.model_validate({}))
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
+    rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
+    notification: NotificationConfig = Field(default_factory=NotificationConfig)
     cors_origin: str = "http://localhost:3001"
 
 
