@@ -1,3 +1,4 @@
+import os
 from typing import Optional
 from dotenv import load_dotenv
 from pydantic import BaseModel, field_validator, Field
@@ -78,9 +79,9 @@ class Settings(BaseSettings):
     )
 
     # Автоматическая сборка объектов при старте
-    database: DatabaseConfig = Field(default_factory=lambda: DatabaseConfig.model_validate({}))
+    database: DatabaseConfig = Field(default_factory=lambda: DatabaseConfig.model_validate(os.environ))
     jwt: JwtConfig = Field(default_factory=JwtConfig)
-    server: ServerConfig = Field(default_factory=lambda: ServerConfig.model_validate({}))
+    server: ServerConfig = Field(default_factory=lambda: ServerConfig.model_validate(os.environ))
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
     notification: NotificationConfig = Field(default_factory=NotificationConfig)
