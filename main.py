@@ -89,6 +89,13 @@ app.include_router(marketing_router)
 app.include_router(reports_router)
 
 
+
+@app.on_event("startup")
+def on_startup():
+    from app.utils.init_db import create_initial_admin
+    create_initial_admin()
+
+
 # Health check endpoint
 @app.get("/health")
 async def health_check():
