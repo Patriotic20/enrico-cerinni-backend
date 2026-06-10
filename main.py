@@ -1,7 +1,6 @@
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from app.config import settings
 
@@ -42,13 +41,6 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["Set-Cookie"],  # Expose Set-Cookie header
 )
-
-# Add trusted host middleware
-app.add_middleware(
-    TrustedHostMiddleware,
-    allowed_hosts=["*"],  # TODO: Configure with specific domains in production
-)
-
 
 # Global exception handler
 @app.exception_handler(Exception)
