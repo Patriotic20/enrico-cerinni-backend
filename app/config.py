@@ -93,6 +93,8 @@ class Settings(BaseSettings):
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
     notification: NotificationConfig = Field(default_factory=NotificationConfig)
     cors_origin: str = "http://localhost:3001"
+    admin_username: str = "admin"
+    admin_password: str = "admin123"
 
 
 settings = Settings()

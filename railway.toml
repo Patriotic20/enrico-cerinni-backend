@@ -1,6 +1,6 @@
 [build]
-builder = "nixpacks"
-buildCommand = "pip install uv && uv sync --no-dev"
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 
 [deploy]
 startCommand = "chmod +x ./startup.sh && ./startup.sh"
