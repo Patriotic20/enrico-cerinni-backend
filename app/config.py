@@ -79,9 +79,16 @@ class Settings(BaseSettings):
     )
 
     # Автоматическая сборка объектов при старте
-    database: DatabaseConfig = Field(default_factory=lambda: DatabaseConfig.model_validate(os.environ))
+    # default_factory lambdas capture os.environ at instantiation time (not import
+    # time) by calling dict(os.environ) inside the lambda body, so Railway's
+    # injected DATABASE_URL and PORT are always present when Settings() is called.
+    database: DatabaseConfig = Field(
+        default_factory=lambda: DatabaseConfig.model_validate(dict(os.environ))
+    )
     jwt: JwtConfig = Field(default_factory=JwtConfig)
-    server: ServerConfig = Field(default_factory=lambda: ServerConfig.model_validate(os.environ))
+    server: ServerConfig = Field(
+        default_factory=lambda: ServerConfig.model_validate(dict(os.environ))
+    )
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
     notification: NotificationConfig = Field(default_factory=NotificationConfig)
