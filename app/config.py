@@ -96,6 +96,8 @@ class Settings(BaseSettings):
     admin_email: str = "admin@example.com"
     admin_username: str = "admin"
     admin_password: str = "admin123"
+    cookie_samesite: str = "lax"
+    cookie_secure: bool = True
 
 
 settings = Settings()
