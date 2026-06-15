@@ -45,7 +45,7 @@ class ProductFilter(BaseModel):
     category_id: Optional[int] = None
     search: Optional[str] = None
     page: int = Field(1, ge=1)
-    size: int = Field(10, ge=1, le=100)
+    size: int = Field(10, ge=1, le=1000)
 
 
 class PaginatedProductResponse(BaseModel):
