@@ -25,6 +25,9 @@ async def get_clients(
     email: Optional[str] = Query(None, description="Filter by email"),
     phone: Optional[str] = Query(None, description="Filter by phone"),
     has_debt: Optional[bool] = Query(None, description="Filter by debt status"),
+    sort_by: Optional[str] = Query(
+        None, description="Sort: debt_amount_desc | debt_amount_asc"
+    ),
     page: int = Query(1, ge=1, description="Page number"),
     size: int = Query(10, ge=1, le=100, description="Page size"),
     db: Session = Depends(get_db),
@@ -32,7 +35,13 @@ async def get_clients(
 ):
     """Get all clients with filtering and pagination."""
     filters = ClientFilter(
-        name=name, email=email, phone=phone, has_debt=has_debt, page=page, size=size
+        name=name,
+        email=email,
+        phone=phone,
+        has_debt=has_debt,
+        sort_by=sort_by,
+        page=page,
+        size=size,
     )
 
     client_service = ClientService(db)

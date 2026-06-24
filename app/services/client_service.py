@@ -1,8 +1,9 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from typing import List, Optional, Tuple
 from decimal import Decimal
 from app.models.client import Client
+from app.models.sale import Sale
 from app.schemas.client import ClientCreate, ClientUpdate, ClientFilter
 from app.utils.helpers import paginate_query, calculate_pagination_info
 from fastapi import HTTPException, status
@@ -37,7 +38,24 @@ class ClientService:
 
     def get_clients(self, filters: ClientFilter) -> Tuple[List[Client], dict]:
         """Get clients with filtering and pagination."""
-        query = self.db.query(Client)
+        # Outstanding debt computed from sales (source of truth), not the
+        # denormalized Client.debt_amount column which can drift.
+        debt_subq = (
+            self.db.query(
+                Sale.client_id.label("client_id"),
+                func.coalesce(
+                    func.sum(Sale.total_amount - Sale.paid_amount), 0
+                ).label("debt"),
+            )
+            .filter(Sale.status.in_(["debt", "partially_paid"]))
+            .group_by(Sale.client_id)
+            .subquery()
+        )
+        debt_expr = func.coalesce(debt_subq.c.debt, 0)
+
+        query = self.db.query(Client, debt_expr.label("debt")).outerjoin(
+            debt_subq, debt_subq.c.client_id == Client.id
+        )
 
         # Apply filters
         if filters.name:
@@ -53,15 +71,27 @@ class ClientService:
 
         if filters.has_debt is not None:
             if filters.has_debt:
-                query = query.filter(Client.debt_amount > 0)
+                query = query.filter(debt_expr > 0)
             else:
-                query = query.filter(Client.debt_amount == 0)
+                query = query.filter(debt_expr <= 0)
+
+        # Sorting
+        if filters.sort_by == "debt_amount_desc":
+            query = query.order_by(debt_expr.desc())
+        elif filters.sort_by == "debt_amount_asc":
+            query = query.order_by(debt_expr.asc())
 
         total = query.count()
 
         query = paginate_query(query, filters.page, filters.size)
 
-        clients = query.all()
+        rows = query.all()
+
+        # Overwrite stale column with computed outstanding debt for the response.
+        clients = []
+        for client, debt in rows:
+            client.debt_amount = debt
+            clients.append(client)
 
         # Calculate pagination info
         pagination = calculate_pagination_info(total, filters.page, filters.size)

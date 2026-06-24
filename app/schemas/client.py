@@ -44,6 +44,7 @@ class ClientFilter(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     has_debt: Optional[bool] = None
+    sort_by: Optional[str] = None
     page: int = Field(1, ge=1)
     size: int = Field(10, ge=1, le=100)
 
