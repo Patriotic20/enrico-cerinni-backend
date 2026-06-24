@@ -518,6 +518,42 @@ async def get_payment_trend(
     )
 
 
+@router.get("/debt-stats", response_model=ResponseModel)
+async def get_debt_stats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Get aggregate debt statistics."""
+    from sqlalchemy import func, and_
+
+    debt_filter = Sale.status.in_(["debt", "partially_paid"])
+
+    total_debt = (
+        db.query(func.coalesce(func.sum(Sale.total_amount - Sale.paid_amount), 0))
+        .filter(debt_filter)
+        .scalar()
+    ) or 0
+
+    debt_sales_count = db.query(func.count(Sale.id)).filter(debt_filter).scalar() or 0
+
+    clients_with_debt = (
+        db.query(func.count(func.distinct(Sale.client_id))).filter(debt_filter).scalar()
+    ) or 0
+
+    avg_debt = float(total_debt) / debt_sales_count if debt_sales_count > 0 else 0
+
+    return ResponseModel(
+        success=True,
+        data={
+            "total_debt": float(total_debt),
+            "debt_sales_count": debt_sales_count,
+            "clients_with_debt": clients_with_debt,
+            "avg_debt": avg_debt,
+        },
+        message="Debt statistics retrieved successfully",
+    )
+
+
 @router.get("/{sale_id}", response_model=ResponseModel)
 async def get_sale(
     sale_id: int,
