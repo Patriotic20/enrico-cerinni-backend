@@ -19,6 +19,7 @@ from app.schemas.common import ResponseModel, PaginatedResponse
 from app.api.deps import get_current_active_user
 from app.models.user import User
 from app.models import Sale, Client, Transaction
+from app.models.sale import SaleStatus
 from app.models.transaction import TransactionType
 
 router = APIRouter(prefix="/sales", tags=["Sales"])
@@ -200,15 +201,50 @@ async def process_debt_payment(
             status_code=400, detail="Payment amount must be greater than zero"
         )
 
-    if client.debt_amount < payment_data.payment_amount:
+    # Outstanding debt is derived from unpaid sales — that is what ClientService
+    # reports and what the debts page shows. Client.debt_amount is a denormalized
+    # cache that drifts, so it must not be the basis for the check.
+    outstanding_sales = (
+        db.query(Sale)
+        .filter(
+            Sale.client_id == client.id,
+            Sale.status.in_([SaleStatus.DEBT, SaleStatus.PARTIALLY_PAID]),
+        )
+        .order_by(Sale.created_at.asc(), Sale.id.asc())
+        .all()
+    )
+    outstanding = sum(
+        (sale.total_amount - sale.paid_amount for sale in outstanding_sales),
+        Decimal("0"),
+    )
+
+    if payment_data.payment_amount > outstanding:
         raise HTTPException(
             status_code=400, detail="Payment amount exceeds debt amount"
         )
 
-    # Debt update and transaction record must land in a single commit: committing
-    # the debt first would leave the client's balance reduced with no matching
-    # transaction if the insert below fails.
-    client.debt_amount -= payment_data.payment_amount
+    # Spread the payment over the client's unpaid sales, oldest first. Without
+    # this the sales keep their original paid_amount, so the debt the UI computes
+    # never moves and the payment looks like it did nothing.
+    remaining = payment_data.payment_amount
+    for sale in outstanding_sales:
+        if remaining <= 0:
+            break
+        due = sale.total_amount - sale.paid_amount
+        if due <= 0:
+            continue
+        applied = min(due, remaining)
+        sale.paid_amount += applied
+        sale.status = (
+            SaleStatus.COMPLETED
+            if sale.paid_amount >= sale.total_amount
+            else SaleStatus.PARTIALLY_PAID
+        )
+        remaining -= applied
+
+    new_debt = outstanding - payment_data.payment_amount
+    # Keep the cached column in step with the recomputed outstanding balance.
+    client.debt_amount = new_debt
 
     transaction = Transaction(
         client_id=payment_data.client_id,
@@ -219,6 +255,8 @@ async def process_debt_payment(
     )
     db.add(transaction)
 
+    # Sales, client balance and transaction must land in a single commit —
+    # a partial write would leave the client's debt out of sync with the sales.
     try:
         db.commit()
     except Exception:
@@ -230,7 +268,7 @@ async def process_debt_payment(
         data={
             "client_id": payment_data.client_id,
             "payment_amount": float(payment_data.payment_amount),
-            "new_debt_amount": float(client.debt_amount),
+            "new_debt_amount": float(new_debt),
         },
         message="Debt payment processed successfully",
     )
