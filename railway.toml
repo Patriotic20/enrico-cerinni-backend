@@ -1,15 +1,12 @@
 [build]
-builder = "NIXPACKS"
-buildCommand = "pip install uv && uv sync --no-dev"
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "chmod +x ./startup.sh && ./startup.sh"
-restartPolicyType = "ON_FAILURE"
+restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
 
-# Service variables (set them in Railway → Variables, not here — railway.toml
-# does not support an [env] section):
-#   DATABASE_URL   — Postgres connection string
-#   CORS_ORIGIN    — comma-separated frontend origins, required for cookie auth
-#   JWT_SECRET, JWT_REFRESH_SECRET, SECRET_KEY
-#   ENVIRONMENT=production, DEBUG=False
+[env]
+PORT = "8000"
+ENVIRONMENT = "production"
+HOST = "0.0.0.0"

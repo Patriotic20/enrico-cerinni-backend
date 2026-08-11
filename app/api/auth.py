@@ -42,6 +42,8 @@ async def login(
                 "phone": user.phone,
                 "role": user.role.value,
                 "created_at": user.created_at.isoformat(),
+                "access_token": tokens["access_token"],
+                "refresh_token": tokens["refresh_token"],
             },
             message="Login successful",
         )
@@ -73,6 +75,8 @@ async def register(
                 "phone": user.phone,
                 "role": user.role.value,
                 "created_at": user.created_at.isoformat(),
+                "access_token": tokens["access_token"],
+                "refresh_token": tokens["refresh_token"],
             },
             message="User registered and logged in successfully",
         )
@@ -84,8 +88,22 @@ async def register(
 async def refresh_token(
     request: Request, response: Response, db: Session = Depends(get_db)
 ):
-    # Get refresh token from cookie or request body
+    # Get refresh token from cookie
     refresh_token = get_token_from_cookie(request, "refresh_token")
+
+    # If not in cookie, try from JSON body
+    if not refresh_token:
+        try:
+            body = await request.json()
+            refresh_token = body.get("refresh_token")
+        except Exception:
+            pass
+
+    # If still not found, try from Authorization header
+    if not refresh_token:
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            refresh_token = auth_header.split(" ")[1]
 
     if not refresh_token:
         return ResponseModel(success=False, message="No refresh token found")
@@ -103,12 +121,15 @@ async def refresh_token(
     access_token = create_access_token(data=token_data)
     new_refresh_token = create_refresh_token(data=token_data)
 
-    # Set new cookies
+    # Set new cookies (for cookie-based clients)
     set_auth_cookies(response, access_token, new_refresh_token)
 
     return ResponseModel(
         success=True,
-        data={"token": new_refresh_token},
+        data={
+            "access_token": access_token,
+            "refresh_token": new_refresh_token,
+        },
         message="Token refreshed successfully",
     )
 

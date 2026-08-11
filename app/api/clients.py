@@ -27,7 +27,7 @@ async def get_clients(
     has_debt: Optional[bool] = Query(None, description="Filter by debt status"),
     search: Optional[str] = Query(None, description="Search by name or phone"),
     sort_by: Optional[str] = Query(
-        None, description="debt_amount_desc | debt_amount_asc | name_asc | name_desc"
+        None, description="Sort: debt_amount_desc | debt_amount_asc"
     ),
     page: int = Query(1, ge=1, description="Page number"),
     size: int = Query(10, ge=1, le=100, description="Page size"),

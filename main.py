@@ -1,7 +1,6 @@
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from app.config import settings
 
@@ -29,25 +28,19 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Add CORS middleware with cookie support.
-# Origins come from CORS_ORIGIN (comma-separated); CORS_ORIGIN_REGEX optionally
-# covers dynamic hosts such as LAN IPs or preview deployments.
+# Add CORS middleware with cookie support for local and LAN development
+allowed_origins = [origin.strip() for origin in settings.cors_origin.split(",") if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_origin_regex=settings.cors_origin_regex,
+    allow_origins=allowed_origins,
+    # Allow any LAN IP like http://192.168.x.x:3000 or http://10.x.x.x:3000 (and other ports)
+    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1|(10|172\.(1[6-9]|2[0-9]|3[0-1])|192\.168)(?:\.\d{1,3}){1,2})(?::\d+)?$",
     allow_credentials=True,  # Required for cookies
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["Set-Cookie"],  # Expose Set-Cookie header
 )
-
-# Add trusted host middleware
-app.add_middleware(
-    TrustedHostMiddleware,
-    allowed_hosts=["*"],  # TODO: Configure with specific domains in production
-)
-
 
 # Global exception handler
 @app.exception_handler(Exception)
@@ -85,6 +78,13 @@ app.include_router(sizes_router)
 app.include_router(product_variants_router)
 app.include_router(marketing_router)
 app.include_router(reports_router)
+
+
+
+@app.on_event("startup")
+def on_startup():
+    from app.utils.init_db import create_initial_admin
+    create_initial_admin()
 
 
 # Health check endpoint

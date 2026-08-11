@@ -74,7 +74,7 @@ async def get_products(
         None, description="Search by name, brand, or description"
     ),
     page: int = Query(1, ge=1, description="Page number"),
-    size: int = Query(10, ge=1, le=100, description="Page size"),
+    size: int = Query(10, ge=1, le=1000, description="Page size"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):

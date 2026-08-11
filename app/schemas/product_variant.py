@@ -33,8 +33,8 @@ class ProductVariantUpdate(BaseModel):
 class ProductVariantResponse(ProductVariantBase):
     id: int
     is_active: bool
-    created_at: str
-    updated_at: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
     color_name: Optional[str] = None
     size_name: Optional[str] = None
 

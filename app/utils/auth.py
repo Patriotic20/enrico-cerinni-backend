@@ -73,9 +73,8 @@ def get_user_from_refresh_token(token: str) -> Optional[dict]:
 # Cookie-based authentication functions
 def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
     """Set authentication cookies with environment-appropriate security settings."""
-    # Determine security settings based on environment
-    secure = True  # Use HTTPS in production
-    samesite = "strict" if settings.server.is_production else "lax"  # Stricter in production
+    secure = settings.cookie_secure
+    samesite = settings.cookie_samesite
 
     # Access token cookie (short-lived)
     response.set_cookie(
@@ -103,8 +102,8 @@ def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
 def clear_auth_cookies(response: Response):
     """Clear authentication cookies with environment-appropriate security settings."""
     # Use same security settings as when setting cookies for proper cleanup
-    secure = True
-    samesite = "strict"
+    secure = settings.cookie_secure
+    samesite = settings.cookie_samesite
     
     response.delete_cookie(
         key="access_token", 

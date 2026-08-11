@@ -4,6 +4,7 @@ from typing import List, Optional, Tuple
 from decimal import Decimal
 from app.models.product import Product
 from app.models.product_variant import ProductVariant
+from app.models.sale import SaleItem
 from app.models.category import Category
 from app.models.brand import Brand
 from app.models.season import Season
@@ -170,6 +171,20 @@ class ProductService:
         product = self.get_product(product_id)
         if not product:
             return False
+
+        # Block delete if any variant was sold — sale_items FK would violate
+        # and deleting would destroy sales history.
+        sold = (
+            self.db.query(SaleItem.id)
+            .join(ProductVariant, SaleItem.product_variant_id == ProductVariant.id)
+            .filter(ProductVariant.product_id == product_id)
+            .first()
+        )
+        if sold:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot delete product with existing sales",
+            )
 
         self.db.delete(product)
         self.db.commit()
