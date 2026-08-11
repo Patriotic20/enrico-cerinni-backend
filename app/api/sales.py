@@ -195,26 +195,35 @@ async def process_debt_payment(
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
+    if payment_data.payment_amount <= 0:
+        raise HTTPException(
+            status_code=400, detail="Payment amount must be greater than zero"
+        )
+
     if client.debt_amount < payment_data.payment_amount:
         raise HTTPException(
             status_code=400, detail="Payment amount exceeds debt amount"
         )
 
-    # Update client debt
+    # Debt update and transaction record must land in a single commit: committing
+    # the debt first would leave the client's balance reduced with no matching
+    # transaction if the insert below fails.
     client.debt_amount -= payment_data.payment_amount
-    db.commit()
 
-    # Create transaction record
     transaction = Transaction(
         client_id=payment_data.client_id,
         user_id=current_user.id,
         amount=payment_data.payment_amount,
         transaction_type=TransactionType.DEBT_PAYMENT,
         description=f"Debt payment of {payment_data.payment_amount}",
-        created_at=datetime.utcnow(),
     )
     db.add(transaction)
-    db.commit()
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
     return ResponseModel(
         success=True,

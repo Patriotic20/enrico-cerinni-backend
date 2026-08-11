@@ -1,8 +1,12 @@
+import logging
+import re
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 from app.api import (
     auth_router,
@@ -31,27 +35,61 @@ app = FastAPI(
 # Add CORS middleware with cookie support for local and LAN development
 allowed_origins = [origin.strip() for origin in settings.cors_origin.split(",") if origin.strip()]
 
+# Allow any LAN IP like http://192.168.x.x:3000 or http://10.x.x.x:3000 (and other ports)
+ALLOWED_ORIGIN_REGEX = (
+    r"^http://(localhost|127\.0\.0\.1|(10|172\.(1[6-9]|2[0-9]|3[0-1])|192\.168)"
+    r"(?:\.\d{1,3}){1,2})(?::\d+)?$"
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    # Allow any LAN IP like http://192.168.x.x:3000 or http://10.x.x.x:3000 (and other ports)
-    allow_origin_regex=r"^http://(localhost|127\.0\.0\.1|(10|172\.(1[6-9]|2[0-9]|3[0-1])|192\.168)(?:\.\d{1,3}){1,2})(?::\d+)?$",
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_credentials=True,  # Required for cookies
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["Set-Cookie"],  # Expose Set-Cookie header
 )
 
+
+def _cors_headers(request) -> dict:
+    """
+    CORS headers for responses produced by exception handlers.
+
+    Starlette runs the `Exception` handler in ServerErrorMiddleware, which sits
+    *outside* CORSMiddleware, so 500 responses never pass through it. Without
+    these headers the browser blocks the body and the frontend only sees an
+    opaque network error instead of the real message.
+    """
+    origin = request.headers.get("origin")
+    if not origin:
+        return {}
+
+    if origin in allowed_origins or re.match(ALLOWED_ORIGIN_REGEX, origin):
+        return {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+            "Vary": "Origin",
+        }
+    return {}
+
+
 # Global exception handler
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
+    # Log the full traceback — otherwise the cause of a 500 is invisible in prod.
+    logger.exception(
+        "Unhandled error on %s %s", request.method, request.url.path, exc_info=exc
+    )
     return JSONResponse(
         status_code=500,
         content={
             "success": False,
             "message": "Internal server error",
+            "detail": "Internal server error",
             "errors": [str(exc)],
         },
+        headers=_cors_headers(request),
     )
 
 
@@ -59,7 +97,14 @@ async def global_exception_handler(request, exc):
 async def http_exception_handler(request, exc):
     return JSONResponse(
         status_code=exc.status_code,
-        content={"success": False, "message": exc.detail, "errors": []},
+        # `detail` is kept alongside `message` because the frontend reads both.
+        content={
+            "success": False,
+            "message": exc.detail,
+            "detail": exc.detail,
+            "errors": [],
+        },
+        headers=_cors_headers(request),
     )
 
 
