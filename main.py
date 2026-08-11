@@ -29,15 +29,13 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Add CORS middleware with cookie support for local and LAN development
-# allowed_origins = [origin.strip() for origin in settings.cors_origin.split(",") if origin.strip()] + ["https://enrico.uz"]
-
+# Add CORS middleware with cookie support.
+# Origins come from CORS_ORIGIN (comma-separated); CORS_ORIGIN_REGEX optionally
+# covers dynamic hosts such as LAN IPs or preview deployments.
 app.add_middleware(
     CORSMiddleware,
-    # allow_origins=allowed_origins,
-    allow_origins=["http://localhost:3000"],
-    # Allow any LAN IP like http://192.168.x.x:3000 or http://10.x.x.x:3000 (and other ports)
-    # allow_origin_regex=r"^http://(localhost|127\.0\.0\.1|(10|172\.(1[6-9]|2[0-9]|3[0-1])|192\.168)(?:\.\d{1,3}){1,2})(?::\d+)?$",
+    allow_origins=settings.cors_origins,
+    allow_origin_regex=settings.cors_origin_regex,
     allow_credentials=True,  # Required for cookies
     allow_methods=["*"],
     allow_headers=["*"],

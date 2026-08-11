@@ -57,7 +57,30 @@ class ClientService:
             else:
                 query = query.filter(Client.debt_amount == 0)
 
+        # Free-text search across the fields the UI advertises: name and phone.
+        if filters.search:
+            term = f"%{filters.search.strip()}%"
+            query = query.filter(
+                or_(
+                    Client.first_name.ilike(term),
+                    Client.last_name.ilike(term),
+                    Client.phone.ilike(term),
+                )
+            )
+
         total = query.count()
+
+        # An explicit order is required for pagination to be stable — without it
+        # Postgres may hand back rows in a different order for every page.
+        sort_options = {
+            "debt_amount_desc": Client.debt_amount.desc(),
+            "debt_amount_asc": Client.debt_amount.asc(),
+            "name_asc": Client.first_name.asc(),
+            "name_desc": Client.first_name.desc(),
+        }
+        query = query.order_by(
+            sort_options.get(filters.sort_by, Client.debt_amount.desc()), Client.id.asc()
+        )
 
         query = paginate_query(query, filters.page, filters.size)
 

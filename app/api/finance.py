@@ -160,17 +160,28 @@ async def get_expense_stats(
 
     expenses = query.all()
 
-    total_expenses = sum(expense.amount for expense in expenses)
+    total_expenses = sum((expense.amount for expense in expenses), Decimal("0"))
     by_category = {}
     for expense in expenses:
         if expense.category not in by_category:
             by_category[expense.category] = Decimal("0")
         by_category[expense.category] += expense.amount
 
+    # The finance header shows the current calendar month next to the total, so
+    # it is computed here instead of costing the UI a second round trip.
+    month_start = datetime.now().replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0
+    )
+    monthly_expenses = sum(
+        (expense.amount for expense in expenses if expense.date >= month_start),
+        Decimal("0"),
+    )
+
     return ResponseModel(
         success=True,
         data={
             "total_expenses": total_expenses,
+            "monthly_expenses": monthly_expenses,
             "by_category": by_category,
             "count": len(expenses),
         },

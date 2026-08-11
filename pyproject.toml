@@ -2,7 +2,9 @@
 name = "enrico-cerrini-backend"
 version = "1.0.0"
 description = "Backend API for Enrico Cerrini clothing store management system"
-requires-python = ">=3.12"
+# Upper bound is required: SQLAlchemy 2.0.23 fails to import on Python 3.13
+# (TypingOnly assertion). Raise it only together with the SQLAlchemy version.
+requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi==0.104.1",
     "uvicorn[standard]==0.24.0",

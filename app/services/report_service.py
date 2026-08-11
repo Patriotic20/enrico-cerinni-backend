@@ -196,11 +196,14 @@ class ReportService:
         total_revenue = revenue_query.scalar() or Decimal('0')
 
         # Calculate expenses
+        # Filtered on `date` (when the money was spent), not `created_at` (when
+        # the row was entered) — they diverge as soon as an expense is
+        # backdated.
         expense_query = (
             self.db.query(func.sum(Expense.amount))
             .filter(
-                Expense.created_at >= start_date,
-                Expense.created_at <= end_date
+                Expense.date >= start_date,
+                Expense.date <= end_date
             )
         )
         total_expenses = expense_query.scalar() or Decimal('0')
@@ -225,22 +228,26 @@ class ReportService:
                 func.sum(Expense.amount).label('total')
             )
             .filter(
-                Expense.created_at >= start_date,
-                Expense.created_at <= end_date
+                Expense.date >= start_date,
+                Expense.date <= end_date
             )
             .group_by(Expense.category)
         )
 
         expense_categories = {item.category: item.total for item in expense_breakdown_query.all()}
-        
+
+        # Keys match the canonical values in app.models.expense.EXPENSE_CATEGORIES.
+        named_categories = ['supplier_costs', 'salary', 'rent', 'utilities', 'marketing']
         expense_breakdown = ExpenseBreakdown(
-            suppliers=expense_categories.get('suppliers', Decimal('0')),
-            salaries=expense_categories.get('salaries', Decimal('0')),
+            suppliers=expense_categories.get('supplier_costs', Decimal('0')),
+            salaries=expense_categories.get('salary', Decimal('0')),
             rent=expense_categories.get('rent', Decimal('0')),
             utilities=expense_categories.get('utilities', Decimal('0')),
             marketing=expense_categories.get('marketing', Decimal('0')),
-            other=sum(v for k, v in expense_categories.items() 
-                     if k not in ['suppliers', 'salaries', 'rent', 'utilities', 'marketing'])
+            other=sum(
+                (v for k, v in expense_categories.items() if k not in named_categories),
+                Decimal('0'),
+            )
         )
 
         # Monthly data for the last 6 months
@@ -262,8 +269,8 @@ class ReportService:
             month_expenses = (
                 self.db.query(func.sum(Expense.amount))
                 .filter(
-                    Expense.created_at >= month_start,
-                    Expense.created_at <= month_end
+                    Expense.date >= month_start,
+                    Expense.date <= month_end
                 )
                 .scalar() or Decimal('0')
             )

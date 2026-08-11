@@ -400,6 +400,38 @@ async def get_client_debts(
     )
 
 
+@router.get("/debt-stats", response_model=ResponseModel)
+async def get_debt_stats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Aggregate outstanding debt: total owed, number of debtors and the average."""
+    from sqlalchemy import func
+
+    total_debt, total_clients = (
+        db.query(
+            func.coalesce(func.sum(Sale.total_amount - Sale.paid_amount), 0),
+            func.count(func.distinct(Sale.client_id)),
+        )
+        .filter(Sale.status.in_(["debt", "partially_paid"]))
+        .one()
+    )
+
+    total_debt = float(total_debt or 0)
+    total_clients = int(total_clients or 0)
+    average_debt = total_debt / total_clients if total_clients else 0.0
+
+    return ResponseModel(
+        success=True,
+        data={
+            "totalDebt": total_debt,
+            "totalClients": total_clients,
+            "averageDebt": average_debt,
+        },
+        message="Debt statistics retrieved successfully",
+    )
+
+
 @router.get("/debt-trend", response_model=ResponseModel)
 async def get_debt_trend(
     days: int = Query(30, ge=1, le=365, description="Number of days to get trend data"),

@@ -1,9 +1,11 @@
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 import asyncio
 import httpx
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.models.broadcast import BroadcastHistory
 from app.models.client import Client
 from app.config import settings
 
@@ -29,6 +31,25 @@ class MarketingService:
             except Exception:
                 return False
 
+    async def _send_telegram_photo(
+        self, chat_id: str, caption: str, image: Tuple[str, bytes, str]
+    ) -> bool:
+        """Send a photo with the message as its caption. `image` is (filename, content, content_type)."""
+        if not settings.notification.telegram_bot_token:
+            return False
+        url = f"https://api.telegram.org/bot{settings.notification.telegram_bot_token}/sendPhoto"
+        filename, content, content_type = image
+        async with httpx.AsyncClient(timeout=30) as client:
+            try:
+                resp = await client.post(
+                    url,
+                    data={"chat_id": chat_id, "caption": caption[:1024]},
+                    files={"photo": (filename, content, content_type)},
+                )
+                return resp.status_code == 200 and resp.json().get("ok", False)
+            except Exception:
+                return False
+
     async def _send_sms_message(self, phone: str, text: str) -> bool:
         # Placeholder generic HTTP provider. Expect environment variables to configure
         if not settings.notification.sms_base_url or not settings.notification.sms_api_key:
@@ -42,7 +63,105 @@ class MarketingService:
             except Exception:
                 return False
 
-    async def broadcast(self, message: str, channels: List[str], client_ids: List[int] | None) -> Tuple[int, dict]:
+    def get_clients(self) -> List[Client]:
+        """Active clients with the channels each one can be reached through."""
+        return (
+            self.db.query(Client)
+            .filter(Client.is_active == True)
+            .order_by(Client.first_name, Client.last_name)
+            .all()
+        )
+
+    def get_stats(self) -> dict:
+        """Audience reach plus aggregate delivery counters from past broadcasts."""
+        clients = self.db.query(Client).filter(Client.is_active == True).all()
+
+        sms_reachable = sum(1 for c in clients if c.phone)
+        telegram_reachable = sum(1 for c in clients if c.telegram_chat_id)
+        unreachable = sum(1 for c in clients if not c.phone and not c.telegram_chat_id)
+
+        totals = self.db.query(
+            func.count(BroadcastHistory.id),
+            func.coalesce(func.sum(BroadcastHistory.sent), 0),
+            func.coalesce(func.sum(BroadcastHistory.failed), 0),
+            func.max(BroadcastHistory.created_at),
+        ).one()
+
+        return {
+            "total_clients": len(clients),
+            "sms_reachable": sms_reachable,
+            "telegram_reachable": telegram_reachable,
+            "unreachable": unreachable,
+            "total_broadcasts": int(totals[0] or 0),
+            "total_messages_sent": int(totals[1] or 0),
+            "total_messages_failed": int(totals[2] or 0),
+            "last_broadcast_at": totals[3],
+        }
+
+    def get_history(self, limit: int = 50, offset: int = 0, channel: Optional[str] = None) -> List[BroadcastHistory]:
+        query = self.db.query(BroadcastHistory)
+        if channel:
+            query = query.filter(BroadcastHistory.channel == channel)
+        return (
+            query.order_by(BroadcastHistory.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+    async def test_telegram_connection(self) -> dict:
+        """Call getMe on the Telegram Bot API to verify the configured token."""
+        token = settings.notification.telegram_bot_token
+        if not token:
+            return {"connected": False, "error": "Telegram bot token is not configured"}
+
+        url = f"https://api.telegram.org/bot{token}/getMe"
+        async with httpx.AsyncClient(timeout=10) as client:
+            try:
+                resp = await client.get(url)
+            except Exception as exc:
+                return {"connected": False, "error": str(exc)}
+
+        if resp.status_code != 200:
+            return {"connected": False, "error": f"Telegram API returned HTTP {resp.status_code}"}
+
+        body = resp.json()
+        if not body.get("ok"):
+            return {"connected": False, "error": body.get("description", "Telegram API rejected the token")}
+
+        return {"connected": True, "bot_username": body.get("result", {}).get("username")}
+
+    def record_broadcast(
+        self,
+        message: str,
+        total_recipients: int,
+        results: dict,
+        created_by: Optional[int] = None,
+    ) -> None:
+        """Persist one history row per channel so the UI can show past sends."""
+        for channel, data in results.items():
+            errors = data.get("errors") or []
+            self.db.add(
+                BroadcastHistory(
+                    channel=channel,
+                    message=message,
+                    total_recipients=total_recipients,
+                    attempted=data.get("attempted", 0),
+                    sent=data.get("sent", 0),
+                    failed=data.get("failed", 0),
+                    error_summary="; ".join(errors[:10]) if errors else None,
+                    created_by=created_by,
+                )
+            )
+        self.db.commit()
+
+    async def broadcast(
+        self,
+        message: str,
+        channels: List[str],
+        client_ids: List[int] | None,
+        image: Optional[Tuple[str, bytes, str]] = None,
+    ) -> Tuple[int, dict]:
         recipients = self._get_recipients(client_ids)
         total = len(recipients)
 
@@ -54,7 +173,11 @@ class MarketingService:
         for client in recipients:
             if "telegram" in channels and client.telegram_chat_id:
                 results["telegram"]["attempted"] += 1
-                tasks.append(asyncio.create_task(self._send_telegram_message(client.telegram_chat_id, message)))
+                if image is not None:
+                    coro = self._send_telegram_photo(client.telegram_chat_id, message, image)
+                else:
+                    coro = self._send_telegram_message(client.telegram_chat_id, message)
+                tasks.append(asyncio.create_task(coro))
                 task_metadata.append(("telegram", client.id))
             if "sms" in channels and client.phone:
                 results["sms"]["attempted"] += 1

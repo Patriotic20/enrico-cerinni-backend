@@ -1,6 +1,7 @@
+import os
 from typing import Optional
 from dotenv import load_dotenv
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 load_dotenv()
@@ -67,6 +68,39 @@ class NotificationConfig(BaseModel):
     sms_base_url: Optional[str] = None
 
 
+# Flat environment variable names accepted as a fallback for the nested
+# APP_CONFIG__<SECTION>__<FIELD> form. Deployment targets (Railway, docker-compose,
+# env.example) supply the flat names, so both spellings must resolve.
+FLAT_ENV_ALIASES = {
+    "database": {"database_url": "DATABASE_URL"},
+    "jwt": {
+        "jwt_secret": "JWT_SECRET",
+        "jwt_refresh_secret": "JWT_REFRESH_SECRET",
+        "jwt_algorithm": "JWT_ALGORITHM",
+        "access_token_expire_minutes": "ACCESS_TOKEN_EXPIRE_MINUTES",
+        "refresh_token_expire_days": "REFRESH_TOKEN_EXPIRE_DAYS",
+    },
+    "server": {
+        "port": "PORT",
+        "host": "HOST",
+        "debug": "DEBUG",
+        "environment": "ENVIRONMENT",
+    },
+    "security": {
+        "secret_key": "SECRET_KEY",
+        "bcrypt_rounds": "BCRYPT_ROUNDS",
+    },
+    "rate_limit": {"rate_limit_per_minute": "RATE_LIMIT_PER_MINUTE"},
+    "notification": {
+        "telegram_bot_token": "TELEGRAM_BOT_TOKEN",
+        "sms_provider": "SMS_PROVIDER",
+        "sms_api_key": "SMS_API_KEY",
+        "sms_from_number": "SMS_FROM_NUMBER",
+        "sms_base_url": "SMS_BASE_URL",
+    },
+}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -82,7 +116,42 @@ class Settings(BaseSettings):
     security: SecurityConfig = SecurityConfig()
     rate_limit: RateLimitConfig = RateLimitConfig()
     notification: NotificationConfig = NotificationConfig()
-    cors_origin: str = "http://localhost:3001"
+    cors_origin: str = "http://localhost:3000"
+    cors_origin_regex: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def apply_flat_env_aliases(cls, values):
+        """Fill sections from flat env vars when the nested form is absent."""
+        if not isinstance(values, dict):
+            return values
+
+        for section, fields in FLAT_ENV_ALIASES.items():
+            section_values = dict(values.get(section) or {})
+            for field, env_name in fields.items():
+                if field in section_values and section_values[field] is not None:
+                    continue
+                env_value = os.getenv(env_name)
+                if env_value is not None:
+                    section_values[field] = env_value
+            if section_values:
+                values[section] = section_values
+
+        for field, env_name in (
+            ("cors_origin", "CORS_ORIGIN"),
+            ("cors_origin_regex", "CORS_ORIGIN_REGEX"),
+        ):
+            if values.get(field) is None:
+                env_value = os.getenv(env_name)
+                if env_value is not None:
+                    values[field] = env_value
+
+        return values
+
+    @property
+    def cors_origins(self) -> list[str]:
+        """CORS origins as a list; the env var holds a comma-separated string."""
+        return [origin.strip() for origin in self.cors_origin.split(",") if origin.strip()]
 
 
 settings = Settings()

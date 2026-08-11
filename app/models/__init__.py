@@ -14,6 +14,7 @@ from .employee import Employee
 from .supplier import Supplier
 from .salary_payment import SalaryPayment
 from .report import Report, ReportTemplate, ReportExecution
+from .broadcast import BroadcastHistory
 
 __all__ = [
     "User",
@@ -35,4 +36,5 @@ __all__ = [
     "Report",
     "ReportTemplate",
     "ReportExecution",
+    "BroadcastHistory",
 ]

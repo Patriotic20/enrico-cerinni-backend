@@ -9,10 +9,20 @@ from app.models.product import Product
 from app.models.product_variant import ProductVariant
 from app.models.client import Client
 from app.models.sale import Sale, SaleStatus, SaleItem
-from app.models.transaction import Transaction
+from app.models.transaction import Transaction, TransactionType
 from app.models.expense import Expense
 from app.services.product_service import ProductService
 from app.services.sale_service import SaleService
+
+# Transactions are always written with a positive amount (see SaleService), so
+# the direction of the money comes from the type, never from the sign. Filtering
+# on `amount < 0` silently matches nothing and reports every expense as zero.
+INFLOW_TYPES = (TransactionType.SALE, TransactionType.DEBT_PAYMENT)
+OUTFLOW_TYPES = (
+    TransactionType.EXPENSE,
+    TransactionType.PURCHASE,
+    TransactionType.REFUND,
+)
 
 
 class DashboardService:
@@ -149,8 +159,8 @@ class DashboardService:
 
         # Monthly expenses (basic calculation)
         month_ago = datetime.now() - timedelta(days=30)
-        monthly_expenses = self.db.query(func.sum(func.abs(Transaction.amount))).filter(
-            Transaction.amount < 0,
+        monthly_expenses = self.db.query(func.sum(Transaction.amount)).filter(
+            Transaction.transaction_type.in_(OUTFLOW_TYPES),
             Transaction.created_at >= month_ago
         ).scalar() or Decimal("0")
 
@@ -206,18 +216,18 @@ class DashboardService:
         # Total transactions
         total_transactions = query.count()
 
-        # Revenue (positive transactions)
-        revenue = query.filter(Transaction.amount > 0).with_entities(
-            func.sum(Transaction.amount)
-        ).scalar() or Decimal("0")
+        # Revenue (money coming in)
+        revenue = query.filter(
+            Transaction.transaction_type.in_(INFLOW_TYPES)
+        ).with_entities(func.sum(Transaction.amount)).scalar() or Decimal("0")
 
-        # Expenses (negative transactions)
-        expenses = query.filter(Transaction.amount < 0).with_entities(
-            func.sum(Transaction.amount)
-        ).scalar() or Decimal("0")
+        # Expenses (money going out)
+        expenses = query.filter(
+            Transaction.transaction_type.in_(OUTFLOW_TYPES)
+        ).with_entities(func.sum(Transaction.amount)).scalar() or Decimal("0")
 
         # Net profit
-        net_profit = revenue + expenses  # expenses is negative
+        net_profit = revenue - expenses
 
         # Transactions by type
         transactions_by_type = (
@@ -233,7 +243,7 @@ class DashboardService:
         return {
             "total_transactions": total_transactions,
             "revenue": float(revenue),
-            "expenses": float(abs(expenses)),
+            "expenses": float(expenses),
             "net_profit": float(net_profit),
             "transactions_by_type": [
                 {"type": t.transaction_type.value, "count": t.count, "total": float(t.total)}
@@ -298,8 +308,8 @@ class DashboardService:
                 ).scalar() or Decimal("0")
                 
                 # Expenses from transactions
-                expenses = self.db.query(func.sum(func.abs(Transaction.amount))).filter(
-                    Transaction.amount < 0,
+                expenses = self.db.query(func.sum(Transaction.amount)).filter(
+                    Transaction.transaction_type.in_(OUTFLOW_TYPES),
                     Transaction.created_at >= day_start,
                     Transaction.created_at < day_end
                 ).scalar() or Decimal("0")
@@ -324,8 +334,8 @@ class DashboardService:
                 ).scalar() or Decimal("0")
                 
                 # Expenses from transactions
-                expenses = self.db.query(func.sum(func.abs(Transaction.amount))).filter(
-                    Transaction.amount < 0,
+                expenses = self.db.query(func.sum(Transaction.amount)).filter(
+                    Transaction.transaction_type.in_(OUTFLOW_TYPES),
                     Transaction.created_at >= week_start,
                     Transaction.created_at < week_end
                 ).scalar() or Decimal("0")
@@ -350,8 +360,8 @@ class DashboardService:
                 ).scalar() or Decimal("0")
                 
                 # Expenses from transactions
-                expenses = self.db.query(func.sum(func.abs(Transaction.amount))).filter(
-                    Transaction.amount < 0,
+                expenses = self.db.query(func.sum(Transaction.amount)).filter(
+                    Transaction.transaction_type.in_(OUTFLOW_TYPES),
                     Transaction.created_at >= month_start,
                     Transaction.created_at < month_end
                 ).scalar() or Decimal("0")
@@ -578,9 +588,9 @@ class DashboardService:
         # Get expenses by category (using transaction descriptions as categories)
         expense_data = self.db.query(
             Transaction.description,
-            func.sum(func.abs(Transaction.amount)).label("total_amount")
+            func.sum(Transaction.amount).label("total_amount")
         ).filter(
-            Transaction.amount < 0,
+            Transaction.transaction_type.in_(OUTFLOW_TYPES),
             Transaction.created_at >= start_date,
             Transaction.created_at <= end_date
         ).group_by(Transaction.description).all()
