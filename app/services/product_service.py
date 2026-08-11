@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, func
 from typing import List, Optional, Tuple
 from decimal import Decimal
 from app.models.product import Product
@@ -229,8 +229,18 @@ class ProductService:
     
     def get_product_by_variant_sku(self, sku: str):
         """Get full product with all variants by variant SKU."""
-        # First find the variant by SKU
-        product_variant = self.db.query(ProductVariant).filter(ProductVariant.sku == sku).first()
+        # Matched case-insensitively and with surrounding whitespace stripped on
+        # both sides: scanners and imports routinely introduce padding, and a
+        # strict `==` then misses a code that is plainly visible in inventory.
+        normalized_sku = (sku or "").strip()
+        if not normalized_sku:
+            return None
+
+        product_variant = (
+            self.db.query(ProductVariant)
+            .filter(func.lower(func.trim(ProductVariant.sku)) == normalized_sku.lower())
+            .first()
+        )
         if not product_variant:
             return None
             
