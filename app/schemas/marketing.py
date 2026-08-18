@@ -70,3 +70,10 @@ class TelegramConnectionStatus(BaseModel):
     bot_username: Optional[str] = None
     error: Optional[str] = None
 
+
+class SmsConnectionStatus(BaseModel):
+    connected: bool
+    balance: Optional[int] = Field(None, description="Remaining SMS on the Eskiz account")
+    sender: Optional[str] = None
+    error: Optional[str] = None
+
