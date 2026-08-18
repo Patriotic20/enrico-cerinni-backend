@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from typing import Optional
 from app.models.user import UserRole
 
@@ -9,13 +9,18 @@ class UserLogin(BaseModel):
 
 
 class UserRegister(BaseModel):
+    """New-user payload. `role` is intentionally not accepted from the request:
+    it was previously honoured verbatim, so any caller could create themselves an
+    admin. New users are always created as MANAGER."""
+
+    model_config = ConfigDict(extra="forbid")
+
     email: str
     username: str
-    password: str
+    password: str = Field(min_length=8)
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     phone: Optional[str] = None
-    role: Optional[UserRole] = UserRole.MANAGER
 
 
 class UserResponse(BaseModel):

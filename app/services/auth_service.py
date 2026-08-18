@@ -51,7 +51,8 @@ class AuthService:
             last_name=user_data.last_name,
             phone=user_data.phone,
             hashed_password=hashed_password,
-            role=user_data.role,
+            # Role is assigned here, never taken from the request payload.
+            role=UserRole.MANAGER,
         )
 
         try:

@@ -12,7 +12,7 @@ from app.utils.auth import (
     clear_auth_cookies,
     get_token_from_cookie,
 )
-from app.api.deps import get_current_user
+from app.api.deps import get_current_admin_user, get_current_user
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -53,17 +53,16 @@ async def login(
 
 @router.post("/register", response_model=ResponseModel)
 async def register(
-    user_data: UserRegister, response: Response, db: Session = Depends(get_db)
+    user_data: UserRegister,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_admin_user),
 ):
+    """Create a staff account. Admin-only: this endpoint used to be public and to
+    accept the new user's role, which allowed anyone to create an admin for
+    themselves. It no longer signs the caller in as the created user."""
     auth_service = AuthService(db)
     try:
         user = auth_service.create_user(user_data)
-
-        # Auto-login after registration
-        login_data = UserLogin(email=user_data.email, password=user_data.password)
-        tokens = auth_service.login_user(login_data)
-        set_auth_cookies(response, tokens["access_token"], tokens["refresh_token"])
-
         return ResponseModel(
             success=True,
             data={
@@ -75,10 +74,8 @@ async def register(
                 "phone": user.phone,
                 "role": user.role.value,
                 "created_at": user.created_at.isoformat(),
-                "access_token": tokens["access_token"],
-                "refresh_token": tokens["refresh_token"],
             },
-            message="User registered and logged in successfully",
+            message="User created successfully",
         )
     except HTTPException as e:
         return ResponseModel(success=False, message=e.detail)
