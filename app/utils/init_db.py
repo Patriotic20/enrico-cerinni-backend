@@ -17,6 +17,13 @@ from app.models.employee import Employee
 from app.models.expense import Expense
 
 def seed_mock_data(db):
+    # Opt-in only. Demo records carry no marker that tells them apart from real
+    # ones, so seeding a live database would leave fake products, clients and
+    # debts that nobody can separate from the shop's own data afterwards.
+    if not settings.seed_mock_data:
+        print("ℹ️ Mock data seeding is disabled (set SEED_MOCK_DATA=true to enable).")
+        return
+
     # Check if Category table is empty to avoid duplicating mock data
     if db.query(Category).first():
         print("ℹ️ Database already contains category data. Skipping mock data seeding.")
@@ -174,14 +181,20 @@ def create_initial_admin():
             db.add(admin_user)
             db.commit()
             print("✅ Initial admin user successfully created!")
-        else:
-            # Synchronize email and password in case they changed, to guarantee login ability
-            print(f"ℹ️ Admin user '{admin.username}' already exists. Syncing email, password, and role...")
+        elif settings.admin_force_reset:
+            # Escape hatch for a lost password: enable ADMIN_FORCE_RESET for one
+            # boot, then turn it off again.
+            print(f"ℹ️ ADMIN_FORCE_RESET is on — resetting '{admin.username}' credentials...")
             admin.email = settings.admin_email
             admin.role = UserRole.ADMIN
             admin.hashed_password = get_password_hash(settings.admin_password)
+            admin.is_active = True
             db.commit()
-            print("✅ Admin user credentials synchronized successfully!")
+            print("✅ Admin credentials reset from environment.")
+        else:
+            # The password is deliberately left alone: re-applying it on every
+            # startup silently reverted any password change made in the app.
+            print(f"ℹ️ Admin user '{admin.username}' already exists — leaving credentials untouched.")
 
         # Seed mock data
         seed_mock_data(db)

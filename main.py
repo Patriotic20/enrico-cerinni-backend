@@ -81,13 +81,15 @@ async def global_exception_handler(request, exc):
     logger.exception(
         "Unhandled error on %s %s", request.method, request.url.path, exc_info=exc
     )
+    # The exception text is deliberately not returned: it carries SQL fragments,
+    # constraint and column names and file paths. It is in the log above instead.
     return JSONResponse(
         status_code=500,
         content={
             "success": False,
             "message": "Internal server error",
             "detail": "Internal server error",
-            "errors": [str(exc)],
+            "errors": [],
         },
         headers=_cors_headers(request),
     )

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.models.broadcast import BroadcastHistory
 from app.models.client import Client
 from app.config import settings
+from app.services.eskiz_sms import eskiz_client
 
 
 class MarketingService:
@@ -51,7 +52,13 @@ class MarketingService:
                 return False
 
     async def _send_sms_message(self, phone: str, text: str) -> bool:
-        # Placeholder generic HTTP provider. Expect environment variables to configure
+        if settings.notification.sms_provider == "eskiz" or eskiz_client.is_configured():
+            ok, error = await eskiz_client.send_sms(phone, text)
+            if not ok and error:
+                # Raising lets broadcast() put the reason into the error summary.
+                raise RuntimeError(error)
+            return ok
+        # Fallback: generic HTTP provider configured via sms_base_url/sms_api_key
         if not settings.notification.sms_base_url or not settings.notification.sms_api_key:
             return False
         headers = {"Authorization": f"Bearer {settings.notification.sms_api_key}"}
@@ -63,14 +70,21 @@ class MarketingService:
             except Exception:
                 return False
 
-    def get_clients(self) -> List[Client]:
+    async def test_sms_connection(self) -> dict:
+        """Verify the configured Eskiz credentials and fetch the remaining limit."""
+        return await eskiz_client.test_connection()
+
+    def get_clients(self, search: Optional[str] = None) -> List[Client]:
         """Active clients with the channels each one can be reached through."""
-        return (
-            self.db.query(Client)
-            .filter(Client.is_active == True)
-            .order_by(Client.first_name, Client.last_name)
-            .all()
-        )
+        query = self.db.query(Client).filter(Client.is_active == True)
+        if search:
+            pattern = f"%{search.strip()}%"
+            query = query.filter(
+                Client.first_name.ilike(pattern)
+                | Client.last_name.ilike(pattern)
+                | Client.phone.ilike(pattern)
+            )
+        return query.order_by(Client.first_name, Client.last_name).all()
 
     def get_stats(self) -> dict:
         """Audience reach plus aggregate delivery counters from past broadcasts."""

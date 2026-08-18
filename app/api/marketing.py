@@ -16,6 +16,7 @@ from app.schemas.marketing import (
     MarketingBroadcastResponse,
     MarketingClient,
     MarketingStats,
+    SmsConnectionStatus,
     TelegramConnectionStatus,
 )
 from app.services.marketing_service import MarketingService
@@ -177,11 +178,12 @@ async def get_broadcast_history(
 
 @router.get("/clients", response_model=ResponseModel)
 async def get_marketing_clients(
+    search: Optional[str] = Query(None, max_length=100, description="Filter by name or phone"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Active clients annotated with the channels they can be reached through."""
-    clients = MarketingService(db).get_clients()
+    clients = MarketingService(db).get_clients(search=search)
     return ResponseModel(
         success=True,
         data=[
@@ -197,6 +199,24 @@ async def get_marketing_clients(
             for c in clients
         ],
         message="Marketing clients retrieved successfully",
+    )
+
+
+@router.get("/sms/test", response_model=ResponseModel)
+async def test_sms_connection(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Verify the configured Eskiz SMS credentials and show the remaining limit."""
+    status = await MarketingService(db).test_sms_connection()
+    return ResponseModel(
+        success=status["connected"],
+        data=SmsConnectionStatus(**status),
+        message=(
+            "SMS provider connection is healthy"
+            if status["connected"]
+            else status.get("error") or "SMS provider connection failed"
+        ),
     )
 
 
