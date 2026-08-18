@@ -452,7 +452,11 @@ async def get_debt_stats(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Aggregate outstanding debt: total owed, number of debtors and the average."""
+    """Aggregate outstanding debt: total owed, number of debtors and the average.
+
+    Deactivated clients are included — their debt is still owed, and the debts
+    table lists them too, so the tiles must add up to what the table shows.
+    """
     from sqlalchemy import func
 
     total_debt, total_clients = (
@@ -471,9 +475,9 @@ async def get_debt_stats(
     return ResponseModel(
         success=True,
         data={
-            "totalDebt": total_debt,
-            "totalClients": total_clients,
-            "averageDebt": average_debt,
+            "total_debt": total_debt,
+            "clients_with_debt": total_clients,
+            "avg_debt": average_debt,
         },
         message="Debt statistics retrieved successfully",
     )
@@ -594,42 +598,6 @@ async def get_payment_trend(
         success=True,
         data=trend_data,
         message="Payment trend data retrieved successfully",
-    )
-
-
-@router.get("/debt-stats", response_model=ResponseModel)
-async def get_debt_stats(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
-):
-    """Get aggregate debt statistics."""
-    from sqlalchemy import func, and_
-
-    debt_filter = Sale.status.in_(["debt", "partially_paid"])
-
-    total_debt = (
-        db.query(func.coalesce(func.sum(Sale.total_amount - Sale.paid_amount), 0))
-        .filter(debt_filter)
-        .scalar()
-    ) or 0
-
-    debt_sales_count = db.query(func.count(Sale.id)).filter(debt_filter).scalar() or 0
-
-    clients_with_debt = (
-        db.query(func.count(func.distinct(Sale.client_id))).filter(debt_filter).scalar()
-    ) or 0
-
-    avg_debt = float(total_debt) / debt_sales_count if debt_sales_count > 0 else 0
-
-    return ResponseModel(
-        success=True,
-        data={
-            "total_debt": float(total_debt),
-            "debt_sales_count": debt_sales_count,
-            "clients_with_debt": clients_with_debt,
-            "avg_debt": avg_debt,
-        },
-        message="Debt statistics retrieved successfully",
     )
 
 
