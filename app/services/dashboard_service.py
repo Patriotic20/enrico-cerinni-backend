@@ -18,6 +18,9 @@ from app.services.sale_service import SaleService
 # the direction of the money comes from the type, never from the sign. Filtering
 # on `amount < 0` silently matches nothing and reports every expense as zero.
 INFLOW_TYPES = (TransactionType.SALE, TransactionType.DEBT_PAYMENT)
+# Refunds are stored with a negative amount while everything else is positive,
+# so outflow sums below take the absolute value — otherwise a refund subtracts
+# from expenses and the total can go negative ("-1 217 so'm" on the dashboard).
 OUTFLOW_TYPES = (
     TransactionType.EXPENSE,
     TransactionType.PURCHASE,
@@ -159,7 +162,7 @@ class DashboardService:
 
         # Monthly expenses (basic calculation)
         month_ago = datetime.now() - timedelta(days=30)
-        monthly_expenses = self.db.query(func.sum(Transaction.amount)).filter(
+        monthly_expenses = self.db.query(func.sum(func.abs(Transaction.amount))).filter(
             Transaction.transaction_type.in_(OUTFLOW_TYPES),
             Transaction.created_at >= month_ago
         ).scalar() or Decimal("0")
@@ -224,7 +227,7 @@ class DashboardService:
         # Expenses (money going out)
         expenses = query.filter(
             Transaction.transaction_type.in_(OUTFLOW_TYPES)
-        ).with_entities(func.sum(Transaction.amount)).scalar() or Decimal("0")
+        ).with_entities(func.sum(func.abs(Transaction.amount))).scalar() or Decimal("0")
 
         # Net profit
         net_profit = revenue - expenses
@@ -234,7 +237,8 @@ class DashboardService:
             query.with_entities(
                 Transaction.transaction_type,
                 func.count(Transaction.id).label("count"),
-                func.sum(Transaction.amount).label("total"),
+                # Magnitude only — the type already says which way it moved.
+                func.sum(func.abs(Transaction.amount)).label("total"),
             )
             .group_by(Transaction.transaction_type)
             .all()
@@ -308,7 +312,7 @@ class DashboardService:
                 ).scalar() or Decimal("0")
                 
                 # Expenses from transactions
-                expenses = self.db.query(func.sum(Transaction.amount)).filter(
+                expenses = self.db.query(func.sum(func.abs(Transaction.amount))).filter(
                     Transaction.transaction_type.in_(OUTFLOW_TYPES),
                     Transaction.created_at >= day_start,
                     Transaction.created_at < day_end
@@ -334,7 +338,7 @@ class DashboardService:
                 ).scalar() or Decimal("0")
                 
                 # Expenses from transactions
-                expenses = self.db.query(func.sum(Transaction.amount)).filter(
+                expenses = self.db.query(func.sum(func.abs(Transaction.amount))).filter(
                     Transaction.transaction_type.in_(OUTFLOW_TYPES),
                     Transaction.created_at >= week_start,
                     Transaction.created_at < week_end
@@ -360,7 +364,7 @@ class DashboardService:
                 ).scalar() or Decimal("0")
                 
                 # Expenses from transactions
-                expenses = self.db.query(func.sum(Transaction.amount)).filter(
+                expenses = self.db.query(func.sum(func.abs(Transaction.amount))).filter(
                     Transaction.transaction_type.in_(OUTFLOW_TYPES),
                     Transaction.created_at >= month_start,
                     Transaction.created_at < month_end
@@ -588,7 +592,7 @@ class DashboardService:
         # Get expenses by category (using transaction descriptions as categories)
         expense_data = self.db.query(
             Transaction.description,
-            func.sum(Transaction.amount).label("total_amount")
+            func.sum(func.abs(Transaction.amount)).label("total_amount")
         ).filter(
             Transaction.transaction_type.in_(OUTFLOW_TYPES),
             Transaction.created_at >= start_date,
