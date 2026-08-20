@@ -475,12 +475,31 @@ async def get_debt_stats(
     """
     from sqlalchemy import func
 
-    total_debt, total_clients = (
+    # Must mirror ClientService.get_clients: unpaid sales plus debt entered by
+    # hand. Counting sales alone left these tiles disagreeing with the table
+    # right below them for every client with a manual debt.
+    sales_debt = (
         db.query(
-            func.coalesce(func.sum(Sale.total_amount - Sale.paid_amount), 0),
-            func.count(func.distinct(Sale.client_id)),
+            Sale.client_id.label("client_id"),
+            func.coalesce(func.sum(Sale.total_amount - Sale.paid_amount), 0).label("debt"),
         )
         .filter(Sale.status.in_(["debt", "partially_paid"]))
+        .group_by(Sale.client_id)
+        .subquery()
+    )
+
+    owed = func.coalesce(sales_debt.c.debt, 0) + func.coalesce(
+        Client.manual_debt_adjustment, 0
+    )
+
+    total_debt, total_clients = (
+        db.query(
+            func.coalesce(func.sum(owed), 0),
+            func.count(Client.id),
+        )
+        .select_from(Client)
+        .outerjoin(sales_debt, sales_debt.c.client_id == Client.id)
+        .filter(owed > 0)
         .one()
     )
 
