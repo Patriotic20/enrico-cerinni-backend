@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field, EmailStr
 from typing import Optional, List
 from decimal import Decimal
 from app.schemas.common import PaginationModel
+from datetime import datetime
 
 
 class ClientBase(BaseModel):
@@ -47,6 +48,11 @@ class ClientFilter(BaseModel):
     # Single free-text box matching name or phone, as used by the debts page.
     search: Optional[str] = None
     sort_by: Optional[str] = None
+    # Exposed by the debts page's filter panel.
+    min_debt: Optional[Decimal] = None
+    max_debt: Optional[Decimal] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
     page: int = Field(1, ge=1)
     size: int = Field(10, ge=1, le=100)
 

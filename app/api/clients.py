@@ -13,6 +13,8 @@ from app.schemas.client import (
     PaginatedClientResponse,
 )
 from app.schemas.common import ResponseModel
+from datetime import datetime
+from decimal import Decimal
 from app.api.deps import get_current_active_user
 from app.models.user import User
 
@@ -27,8 +29,16 @@ async def get_clients(
     has_debt: Optional[bool] = Query(None, description="Filter by debt status"),
     search: Optional[str] = Query(None, description="Search by name or phone"),
     sort_by: Optional[str] = Query(
-        None, description="Sort: debt_amount_desc | debt_amount_asc"
+        None,
+        description=(
+            "debt_amount_desc | debt_amount_asc | client_name_asc | "
+            "client_name_desc | created_at_desc | created_at_asc"
+        ),
     ),
+    min_debt: Optional[Decimal] = Query(None, description="Minimum outstanding debt"),
+    max_debt: Optional[Decimal] = Query(None, description="Maximum outstanding debt"),
+    start_date: Optional[datetime] = Query(None, description="Debt accrued from"),
+    end_date: Optional[datetime] = Query(None, description="Debt accrued until"),
     page: int = Query(1, ge=1, description="Page number"),
     size: int = Query(10, ge=1, le=100, description="Page size"),
     db: Session = Depends(get_db),
@@ -42,6 +52,10 @@ async def get_clients(
         has_debt=has_debt,
         search=search,
         sort_by=sort_by,
+        min_debt=min_debt,
+        max_debt=max_debt,
+        start_date=start_date,
+        end_date=end_date,
         page=page,
         size=size,
     )

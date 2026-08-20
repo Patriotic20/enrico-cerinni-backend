@@ -40,17 +40,21 @@ class ClientService:
         """Get clients with filtering and pagination."""
         # Outstanding debt computed from sales (source of truth), not the
         # denormalized Client.debt_amount column which can drift.
-        debt_subq = (
-            self.db.query(
-                Sale.client_id.label("client_id"),
-                func.coalesce(
-                    func.sum(Sale.total_amount - Sale.paid_amount), 0
-                ).label("debt"),
-            )
-            .filter(Sale.status.in_(["debt", "partially_paid"]))
-            .group_by(Sale.client_id)
-            .subquery()
-        )
+        debt_rows = self.db.query(
+            Sale.client_id.label("client_id"),
+            func.coalesce(
+                func.sum(Sale.total_amount - Sale.paid_amount), 0
+            ).label("debt"),
+        ).filter(Sale.status.in_(["debt", "partially_paid"]))
+
+        # The debts page offers a date range; it narrows which sales the debt is
+        # accrued from rather than filtering clients by their signup date.
+        if filters.start_date:
+            debt_rows = debt_rows.filter(Sale.created_at >= filters.start_date)
+        if filters.end_date:
+            debt_rows = debt_rows.filter(Sale.created_at <= filters.end_date)
+
+        debt_subq = debt_rows.group_by(Sale.client_id).subquery()
         debt_expr = func.coalesce(debt_subq.c.debt, 0)
 
         query = self.db.query(Client, debt_expr.label("debt")).outerjoin(
@@ -75,12 +79,24 @@ class ClientService:
             else:
                 query = query.filter(debt_expr <= 0)
 
+        if filters.min_debt is not None:
+            query = query.filter(debt_expr >= filters.min_debt)
+        if filters.max_debt is not None:
+            query = query.filter(debt_expr <= filters.max_debt)
+
         # Sorting. Client.id breaks ties so that pagination is stable — without
         # a total order Postgres may return rows differently on every page.
-        if filters.sort_by == "debt_amount_asc":
-            query = query.order_by(debt_expr.asc(), Client.id.asc())
-        else:
-            query = query.order_by(debt_expr.desc(), Client.id.asc())
+        sort_options = {
+            "debt_amount_desc": debt_expr.desc(),
+            "debt_amount_asc": debt_expr.asc(),
+            "client_name_asc": Client.first_name.asc(),
+            "client_name_desc": Client.first_name.desc(),
+            "created_at_desc": Client.created_at.desc(),
+            "created_at_asc": Client.created_at.asc(),
+        }
+        query = query.order_by(
+            sort_options.get(filters.sort_by, debt_expr.desc()), Client.id.asc()
+        )
 
         # Free-text search across the fields the UI advertises: name and phone.
         if filters.search:
