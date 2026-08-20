@@ -11,7 +11,8 @@ from app.schemas.expense import ExpenseCreate, ExpenseUpdate, ExpenseResponse
 from app.schemas.employee import EmployeeCreate, EmployeeUpdate, EmployeeResponse
 from app.schemas.supplier import SupplierCreate, SupplierUpdate, SupplierResponse
 from app.schemas.salary_payment import SalaryPaymentCreate, SalaryPaymentUpdate, SalaryPaymentResponse
-from app.models import Expense, Employee, Supplier, SalaryPayment
+from app.models import Expense, Employee, Supplier, SalaryPayment, Transaction
+from app.models.transaction import TransactionType
 
 router = APIRouter(prefix="/finance", tags=["Finance"])
 
@@ -177,13 +178,50 @@ async def get_expense_stats(
         Decimal("0"),
     )
 
+    # Salaries and stock purchases are canonical expense categories (see
+    # EXPENSE_CATEGORIES) but they are not stored as Expense rows — they live in
+    # salary_payments and in PURCHASE transactions. Without folding them in, the
+    # finance page's "Ish haqi" and "Yetkazib beruvchilar" cards read 0 forever.
+    salary_query = db.query(SalaryPayment)
+    purchase_query = db.query(Transaction).filter(
+        Transaction.transaction_type == TransactionType.PURCHASE
+    )
+    if start_date:
+        salary_query = salary_query.filter(SalaryPayment.payment_date >= start_date)
+        purchase_query = purchase_query.filter(Transaction.created_at >= start_date)
+    if end_date:
+        salary_query = salary_query.filter(SalaryPayment.payment_date <= end_date)
+        purchase_query = purchase_query.filter(Transaction.created_at <= end_date)
+
+    salary_payments = salary_query.all()
+    purchases = purchase_query.all()
+
+    salary_total = sum((p.amount for p in salary_payments), Decimal("0"))
+    purchase_total = sum((t.amount for t in purchases), Decimal("0"))
+
+    if salary_total:
+        by_category["salary"] = by_category.get("salary", Decimal("0")) + salary_total
+    if purchase_total:
+        by_category["supplier_costs"] = (
+            by_category.get("supplier_costs", Decimal("0")) + purchase_total
+        )
+
+    total_expenses += salary_total + purchase_total
+    monthly_expenses += sum(
+        (p.amount for p in salary_payments if p.payment_date.replace(tzinfo=None) >= month_start),
+        Decimal("0"),
+    ) + sum(
+        (t.amount for t in purchases if t.created_at.replace(tzinfo=None) >= month_start),
+        Decimal("0"),
+    )
+
     return ResponseModel(
         success=True,
         data={
             "total_expenses": total_expenses,
             "monthly_expenses": monthly_expenses,
             "by_category": by_category,
-            "count": len(expenses),
+            "count": len(expenses) + len(salary_payments) + len(purchases),
         },
         message="Expense statistics retrieved successfully",
     )

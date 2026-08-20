@@ -69,6 +69,10 @@ class SaleFilter(BaseModel):
     status: Optional[SaleStatus] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    # Exposed by the sales page's filter panel.
+    search: Optional[str] = None
+    min_amount: Optional[Decimal] = None
+    max_amount: Optional[Decimal] = None
     page: int = 1
     size: int = 10
 

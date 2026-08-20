@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from typing import List, Optional, Tuple
 from decimal import Decimal
 from datetime import datetime, timedelta
@@ -150,6 +150,24 @@ class SaleService:
         if filters.end_date:
             end_date = datetime.fromisoformat(filters.end_date)
             query = query.filter(Sale.created_at <= end_date)
+
+        # Free-text search over the receipt number and the client's name, which
+        # is what the sales page's search box offers.
+        if filters.search:
+            term = f"%{filters.search.strip()}%"
+            query = query.outerjoin(Client, Sale.client_id == Client.id).filter(
+                or_(
+                    Sale.receipt_number.ilike(term),
+                    Client.first_name.ilike(term),
+                    Client.last_name.ilike(term),
+                )
+            )
+
+        if filters.min_amount is not None:
+            query = query.filter(Sale.total_amount >= filters.min_amount)
+
+        if filters.max_amount is not None:
+            query = query.filter(Sale.total_amount <= filters.max_amount)
 
         # Get total count
         total = query.count()
