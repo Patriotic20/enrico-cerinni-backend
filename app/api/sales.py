@@ -219,10 +219,14 @@ async def process_debt_payment(
         .order_by(Sale.created_at.asc(), Sale.id.asc())
         .all()
     )
-    outstanding = sum(
+    sales_outstanding = sum(
         (sale.total_amount - sale.paid_amount for sale in outstanding_sales),
         Decimal("0"),
     )
+    # Debt entered by hand has no sale to settle against, so it is part of what
+    # the client owes and must be payable too.
+    manual_outstanding = Decimal(client.manual_debt_adjustment or 0)
+    outstanding = sales_outstanding + manual_outstanding
 
     if payment_data.payment_amount > outstanding:
         raise HTTPException(
@@ -247,6 +251,12 @@ async def process_debt_payment(
             else SaleStatus.PARTIALLY_PAID
         )
         remaining -= applied
+
+    # Whatever the sales could not absorb comes off the manual adjustment.
+    if remaining > 0:
+        client.manual_debt_adjustment = manual_outstanding - remaining
+    else:
+        client.manual_debt_adjustment = manual_outstanding
 
     new_debt = outstanding - payment_data.payment_amount
     # Keep the cached column in step with the recomputed outstanding balance.

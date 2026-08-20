@@ -55,7 +55,10 @@ class ClientService:
             debt_rows = debt_rows.filter(Sale.created_at <= filters.end_date)
 
         debt_subq = debt_rows.group_by(Sale.client_id).subquery()
-        debt_expr = func.coalesce(debt_subq.c.debt, 0)
+        # Unpaid sales plus anything entered by hand via "Qarz qo'shish".
+        debt_expr = func.coalesce(debt_subq.c.debt, 0) + func.coalesce(
+            Client.manual_debt_adjustment, 0
+        )
 
         # Most recent sale per client, for the "last purchase" column and the
         # active-clients card. Cancelled sales do not count as a purchase.
@@ -184,15 +187,36 @@ class ClientService:
         self.db.commit()
         return True
 
+    def sale_derived_debt(self, client_id: int) -> Decimal:
+        """Outstanding debt that comes from this client's unpaid sales."""
+        total = (
+            self.db.query(func.coalesce(func.sum(Sale.total_amount - Sale.paid_amount), 0))
+            .filter(
+                Sale.client_id == client_id,
+                Sale.status.in_(["debt", "partially_paid"]),
+            )
+            .scalar()
+        )
+        return Decimal(total or 0)
+
     def update_client_debt(
         self, client_id: int, debt_amount: Decimal
     ) -> Optional[Client]:
-        """Update client debt amount."""
+        """Set a client's total outstanding debt.
+
+        Callers pass the total they want the client to owe. Sale-derived debt
+        cannot be edited from here, so the difference is stored as the manual
+        adjustment — writing the total straight into debt_amount used to leave
+        the debts list unchanged, because that list reads the sales instead.
+        """
         client = self.get_client(client_id)
         if not client:
             return None
 
-        client.debt_amount = debt_amount
+        target = Decimal(debt_amount)
+        client.manual_debt_adjustment = target - self.sale_derived_debt(client_id)
+        # Kept in step so anything still reading the column sees the same total.
+        client.debt_amount = target
         self.db.commit()
         self.db.refresh(client)
         return client

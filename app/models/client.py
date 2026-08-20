@@ -16,6 +16,10 @@ class Client(Base):
     address = Column(Text, nullable=True)
     
     debt_amount = Column(Numeric(14, 2), default=0, nullable=False)
+    # Debt entered by hand (no sale behind it). The outstanding total a client
+    # owes is their unpaid sales plus this. Kept separate so the sale-derived
+    # figure stays the source of truth for anything that came from a sale.
+    manual_debt_adjustment = Column(Numeric(14, 2), default=0, nullable=False)
     notes = Column(Text, nullable=True)
     
     is_active = Column(Boolean, default=True, nullable=False)
