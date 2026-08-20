@@ -22,8 +22,8 @@ class ProductVariant(Base):
     size_id = Column(Integer, ForeignKey("sizes.id"), nullable=False)
     sku = Column(String(50), unique=True, index=True, nullable=False)
     
-    price = Column(Numeric(10, 2), nullable=False)
-    cost_price = Column(Numeric(10, 2), nullable=True)
+    price = Column(Numeric(14, 2), nullable=False)
+    cost_price = Column(Numeric(14, 2), nullable=True)
     
     stock_quantity = Column(Integer, default=0, nullable=False)
     

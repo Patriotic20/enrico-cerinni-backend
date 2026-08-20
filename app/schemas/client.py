@@ -34,6 +34,9 @@ class ClientResponse(ClientBase):
     is_active: bool
     created_at: str
     updated_at: Optional[str] = None
+    # Date of the client's most recent sale. The clients table has a column for
+    # it and the "active clients" card counts on it, so it has to be returned.
+    last_purchase_date: Optional[str] = None
 
 
 class ClientDebtUpdate(BaseModel):

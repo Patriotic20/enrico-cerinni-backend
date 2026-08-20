@@ -21,6 +21,7 @@ from app.schemas.report import (
     PerformanceReportData, PerformanceMetric, KPIData,
     CustomReportData, CustomReportConfig
 )
+from app.services.expense_totals import expense_totals_by_category
 
 
 class ReportService:
@@ -195,18 +196,12 @@ class ReportService:
         )
         total_revenue = revenue_query.scalar() or Decimal('0')
 
-        # Calculate expenses
-        # Filtered on `date` (when the money was spent), not `created_at` (when
-        # the row was entered) — they diverge as soon as an expense is
-        # backdated.
-        expense_query = (
-            self.db.query(func.sum(Expense.amount))
-            .filter(
-                Expense.date >= start_date,
-                Expense.date <= end_date
-            )
-        )
-        total_expenses = expense_query.scalar() or Decimal('0')
+        # Calculate expenses. Salaries and stock purchases live in their own
+        # tables, so the shared helper folds them in — counting only Expense
+        # rows understated the total and left the suppliers/salaries slices of
+        # the breakdown permanently at zero.
+        expense_categories = expense_totals_by_category(self.db, start_date, end_date)
+        total_expenses = sum(expense_categories.values(), Decimal('0'))
 
         # Calculate metrics
         net_profit = total_revenue - total_expenses
@@ -220,21 +215,6 @@ class ReportService:
             profit_margin=profit_margin,
             cash_flow=cash_flow
         )
-
-        # Expense breakdown by category
-        expense_breakdown_query = (
-            self.db.query(
-                Expense.category,
-                func.sum(Expense.amount).label('total')
-            )
-            .filter(
-                Expense.date >= start_date,
-                Expense.date <= end_date
-            )
-            .group_by(Expense.category)
-        )
-
-        expense_categories = {item.category: item.total for item in expense_breakdown_query.all()}
 
         # Keys match the canonical values in app.models.expense.EXPENSE_CATEGORIES.
         named_categories = ['supplier_costs', 'salary', 'rent', 'utilities', 'marketing']
@@ -478,35 +458,134 @@ class ReportService:
         )
 
     def generate_performance_report(self, filters: Optional[ReportFilters] = None) -> PerformanceReportData:
-        """Generate performance report."""
-        # Calculate growth rates and performance metrics (placeholder data)
-        metrics = PerformanceMetric(
-            revenue_growth_rate=15.2,
-            sales_growth_rate=12.8,
-            profit_margin_trend=8.5,
-            inventory_turnover=4.2,
-            customer_retention_rate=78.5
+        """Generate performance report.
+
+        Every figure here is computed by comparing the selected period against
+        the immediately preceding period of the same length. It used to return
+        hardcoded constants (15.2, 12.8, 4.2 ...) that never moved with the data.
+        """
+        start_date, end_date = self._get_date_range(filters)
+        span = end_date - start_date
+        prev_start, prev_end = start_date - span, start_date
+
+        def period_sales(begin, finish):
+            return self.db.query(Sale).filter(
+                Sale.created_at >= begin,
+                Sale.created_at <= finish,
+                Sale.status != SaleStatus.CANCELLED,
+            )
+
+        def growth(current, previous):
+            """Percentage change; 0 when there is no baseline to compare to."""
+            if not previous:
+                return 0.0
+            return float((current - previous) / previous * 100)
+
+        current_revenue = period_sales(start_date, end_date).with_entities(
+            func.coalesce(func.sum(Sale.total_amount), 0)
+        ).scalar() or Decimal("0")
+        previous_revenue = period_sales(prev_start, prev_end).with_entities(
+            func.coalesce(func.sum(Sale.total_amount), 0)
+        ).scalar() or Decimal("0")
+
+        current_count = period_sales(start_date, end_date).count()
+        previous_count = period_sales(prev_start, prev_end).count()
+
+        # Margin trend is the change in percentage points, not a ratio.
+        current_expenses = sum(
+            expense_totals_by_category(self.db, start_date, end_date).values(), Decimal("0")
+        )
+        previous_expenses = sum(
+            expense_totals_by_category(self.db, prev_start, prev_end).values(), Decimal("0")
+        )
+        current_margin = (
+            float((current_revenue - current_expenses) / current_revenue * 100)
+            if current_revenue > 0 else 0.0
+        )
+        previous_margin = (
+            float((previous_revenue - previous_expenses) / previous_revenue * 100)
+            if previous_revenue > 0 else 0.0
         )
 
-        # KPI data
-        kpis = [
-            KPIData(name="Revenue Target", current_value=87.5, target_value=100.0, achievement_percentage=87.5, trend="up"),
-            KPIData(name="Sales Target", current_value=92.3, target_value=100.0, achievement_percentage=92.3, trend="up"),
-            KPIData(name="Profit Margin", current_value=28.5, target_value=30.0, achievement_percentage=95.0, trend="stable"),
-            KPIData(name="Customer Satisfaction", current_value=4.2, target_value=4.5, achievement_percentage=93.3, trend="up")
-        ]
+        # Turnover = cost of goods sold in the period / value of stock on hand.
+        cogs = self.db.query(
+            func.coalesce(func.sum(SaleItem.quantity * ProductVariant.cost_price), 0)
+        ).join(
+            ProductVariant, SaleItem.product_variant_id == ProductVariant.id
+        ).join(
+            Sale, SaleItem.sale_id == Sale.id
+        ).filter(
+            Sale.created_at >= start_date,
+            Sale.created_at <= end_date,
+            Sale.status != SaleStatus.CANCELLED,
+        ).scalar() or Decimal("0")
 
-        # Monthly performance data (placeholder)
-        monthly_performance = [
-            {"month": "Jan", "revenue_growth": 12.5, "sales_growth": 10.2},
-            {"month": "Feb", "revenue_growth": 15.8, "sales_growth": 13.5},
-            {"month": "Mar", "revenue_growth": 18.2, "sales_growth": 16.1}
-        ]
+        stock_value = self.db.query(
+            func.coalesce(
+                func.sum(ProductVariant.stock_quantity * ProductVariant.cost_price), 0
+            )
+        ).scalar() or Decimal("0")
+        inventory_turnover = float(cogs / stock_value) if stock_value > 0 else 0.0
 
+        # Retention: of the clients who bought last period, how many came back.
+        def buyer_ids(begin, finish):
+            rows = period_sales(begin, finish).filter(
+                Sale.client_id.isnot(None)
+            ).with_entities(Sale.client_id).distinct().all()
+            return {row[0] for row in rows}
+
+        previous_buyers = buyer_ids(prev_start, prev_end)
+        returning = previous_buyers & buyer_ids(start_date, end_date)
+        retention = (
+            len(returning) / len(previous_buyers) * 100 if previous_buyers else 0.0
+        )
+
+        metrics = PerformanceMetric(
+            revenue_growth_rate=round(growth(current_revenue, previous_revenue), 2),
+            sales_growth_rate=round(growth(current_count, previous_count), 2),
+            profit_margin_trend=round(current_margin - previous_margin, 2),
+            inventory_turnover=round(inventory_turnover, 2),
+            customer_retention_rate=round(retention, 2),
+        )
+
+        # Month-over-month growth for the last six months.
+        monthly_performance = []
+        month_anchor = datetime.now().replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0
+        )
+        for i in range(5, -1, -1):
+            month_start = (month_anchor - timedelta(days=i * 30)).replace(day=1)
+            month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(seconds=1)
+            before_start = (month_start - timedelta(days=1)).replace(day=1)
+            before_end = month_start - timedelta(seconds=1)
+
+            revenue = period_sales(month_start, month_end).with_entities(
+                func.coalesce(func.sum(Sale.total_amount), 0)
+            ).scalar() or Decimal("0")
+            revenue_before = period_sales(before_start, before_end).with_entities(
+                func.coalesce(func.sum(Sale.total_amount), 0)
+            ).scalar() or Decimal("0")
+
+            monthly_performance.append({
+                "month": month_start.strftime("%b %Y"),
+                "revenue": float(revenue),
+                "revenue_growth": round(growth(revenue, revenue_before), 2),
+                "sales_growth": round(
+                    growth(
+                        period_sales(month_start, month_end).count(),
+                        period_sales(before_start, before_end).count(),
+                    ),
+                    2,
+                ),
+            })
+
+        # KPIs are intentionally empty: targets are a business input and no
+        # table holds them. Returning invented targets would look authoritative
+        # while being fiction.
         return PerformanceReportData(
             metrics=metrics,
-            kpis=kpis,
-            monthly_performance=monthly_performance
+            kpis=[],
+            monthly_performance=monthly_performance,
         )
 
     def generate_custom_report(self, config: CustomReportConfig, filters: Optional[ReportFilters] = None) -> CustomReportData:

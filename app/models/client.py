@@ -15,7 +15,7 @@ class Client(Base):
     telegram_chat_id = Column(String(64), index=True, nullable=True)
     address = Column(Text, nullable=True)
     
-    debt_amount = Column(Numeric(10, 2), default=0, nullable=False)
+    debt_amount = Column(Numeric(14, 2), default=0, nullable=False)
     notes = Column(Text, nullable=True)
     
     is_active = Column(Boolean, default=True, nullable=False)

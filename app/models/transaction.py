@@ -29,7 +29,7 @@ class Transaction(Base):
     
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     
-    amount = Column(Numeric(10, 2), nullable=False)
+    amount = Column(Numeric(14, 2), nullable=False)
     description = Column(Text, nullable=True)
     
     transaction_type = Column(Enum(TransactionType), nullable=False)

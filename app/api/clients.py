@@ -78,6 +78,11 @@ async def get_clients(
                 is_active=client.is_active,
                 created_at=client.created_at.isoformat(),
                 updated_at=client.updated_at.isoformat() if client.updated_at else None,
+                last_purchase_date=(
+                    client.last_purchase_date.isoformat()
+                    if getattr(client, "last_purchase_date", None)
+                    else None
+                ),
             )
         )
 

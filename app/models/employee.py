@@ -15,7 +15,7 @@ class Employee(Base):
     email = Column(String)
 
     position = Column(String, nullable=False)
-    salary = Column(Numeric(10, 2), nullable=False)
+    salary = Column(Numeric(14, 2), nullable=False)
     address = Column(Text, nullable=True)
 
     hire_date = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

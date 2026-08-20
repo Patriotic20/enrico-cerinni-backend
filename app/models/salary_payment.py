@@ -9,7 +9,7 @@ class SalaryPayment(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False)
-    amount = Column(Numeric(10, 2), nullable=False)
+    amount = Column(Numeric(14, 2), nullable=False)
     payment_date = Column(DateTime(timezone=True), nullable=False)
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -23,7 +23,7 @@ class Expense(Base):
     id = Column(Integer, primary_key=True, index=True)
 
     description = Column(String, nullable=False)
-    amount = Column(Numeric(10, 2), nullable=False)
+    amount = Column(Numeric(14, 2), nullable=False)
     category = Column(String, nullable=False, index=True, server_default="other")
 
     expense_target_id = Column(Integer, nullable=True)

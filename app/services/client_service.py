@@ -57,8 +57,26 @@ class ClientService:
         debt_subq = debt_rows.group_by(Sale.client_id).subquery()
         debt_expr = func.coalesce(debt_subq.c.debt, 0)
 
-        query = self.db.query(Client, debt_expr.label("debt")).outerjoin(
-            debt_subq, debt_subq.c.client_id == Client.id
+        # Most recent sale per client, for the "last purchase" column and the
+        # active-clients card. Cancelled sales do not count as a purchase.
+        last_purchase_subq = (
+            self.db.query(
+                Sale.client_id.label("client_id"),
+                func.max(Sale.created_at).label("last_purchase"),
+            )
+            .filter(Sale.status != "cancelled")
+            .group_by(Sale.client_id)
+            .subquery()
+        )
+
+        query = (
+            self.db.query(
+                Client,
+                debt_expr.label("debt"),
+                last_purchase_subq.c.last_purchase.label("last_purchase"),
+            )
+            .outerjoin(debt_subq, debt_subq.c.client_id == Client.id)
+            .outerjoin(last_purchase_subq, last_purchase_subq.c.client_id == Client.id)
         )
 
         # Apply filters
@@ -115,10 +133,12 @@ class ClientService:
 
         rows = query.all()
 
-        # Overwrite stale column with computed outstanding debt for the response.
+        # Overwrite stale column with computed outstanding debt for the response,
+        # and attach the last purchase date the query just resolved.
         clients = []
-        for client, debt in rows:
+        for client, debt, last_purchase in rows:
             client.debt_amount = debt
+            client.last_purchase_date = last_purchase
             clients.append(client)
 
         # Calculate pagination info

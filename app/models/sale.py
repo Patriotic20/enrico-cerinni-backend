@@ -38,8 +38,8 @@ class Sale(Base):
     
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
     
-    total_amount = Column(Numeric(10, 2), nullable=False)
-    paid_amount = Column(Numeric(10, 2), default=0, nullable=False)
+    total_amount = Column(Numeric(14, 2), nullable=False)
+    paid_amount = Column(Numeric(14, 2), default=0, nullable=False)
     
     payment_method = Column(Enum(PaymentMethod), nullable=False)
     status = Column(Enum(SaleStatus), default=SaleStatus.PENDING, nullable=False)
@@ -64,8 +64,8 @@ class SaleItem(Base):
     
     quantity = Column(Integer, nullable=False)
     
-    unit_price = Column(Numeric(10, 2), nullable=False)
-    total_price = Column(Numeric(10, 2), nullable=False)
+    unit_price = Column(Numeric(14, 2), nullable=False)
+    total_price = Column(Numeric(14, 2), nullable=False)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
