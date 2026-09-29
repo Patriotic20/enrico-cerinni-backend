@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas.category import CategoryCreate, CategoryUpdate, CategoryResponse
 from app.schemas.common import ResponseModel
-from app.api.deps import get_current_active_user
+from app.api.deps import get_current_active_user, require_staff
 from app.models.user import User
 from app.models.category import Category
 from app.models.product import Product
@@ -40,7 +40,7 @@ async def get_categories(
     )
 
 
-@router.post("/categories", response_model=ResponseModel)
+@router.post("/categories", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 async def create_category(
     category_data: CategoryCreate,
     db: Session = Depends(get_db),
@@ -76,7 +76,7 @@ async def create_category(
     )
 
 
-@router.put("/categories/{category_id}", response_model=ResponseModel)
+@router.put("/categories/{category_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 async def update_category(
     category_id: int,
     category_data: CategoryUpdate,
@@ -119,7 +119,7 @@ async def update_category(
     )
 
 
-@router.delete("/categories/{category_id}", response_model=ResponseModel)
+@router.delete("/categories/{category_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 async def delete_category(
     category_id: int,
     db: Session = Depends(get_db),

@@ -22,7 +22,7 @@ import argparse
 import random
 import string
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import text
@@ -50,7 +50,8 @@ from app.utils.auth import get_password_hash
 # Deterministic output so re-seeding gives comparable numbers.
 random.seed(20260811)
 
-NOW = datetime.now()
+# Shop runs in Tashkent; naive times were stored as UTC and landed in the future.
+NOW = datetime.now(timezone(timedelta(hours=5)))
 HISTORY_DAYS = 180
 
 # Business tables cleared by --reset, ordered so children die before parents.
@@ -148,13 +149,14 @@ SUPPLIERS = [
      "Toshkent sh., Chilonzor tumani, Bunyodkor 45"),
 ]
 
+# (first, last, position, salary, is_seller, commission %, monthly plan)
 EMPLOYEES = [
-    ("Aziz", "Karimov", "Do'kon menejeri", 8_500_000),
-    ("Malika", "Tosheva", "Katta sotuvchi", 6_200_000),
-    ("Jasur", "Rahimov", "Sotuvchi", 5_000_000),
-    ("Nigora", "Yusupova", "Sotuvchi", 5_000_000),
-    ("Sardor", "Aliyev", "Omborchi", 4_800_000),
-    ("Kamola", "Nazarova", "Buxgalter", 7_000_000),
+    ("Aziz", "Karimov", "Do'kon menejeri", 8_500_000, True, 1, 60_000_000),
+    ("Malika", "Tosheva", "Katta sotuvchi", 6_200_000, True, 3, 80_000_000),
+    ("Jasur", "Rahimov", "Sotuvchi", 5_000_000, True, 2.5, 50_000_000),
+    ("Nigora", "Yusupova", "Sotuvchi", 5_000_000, True, 2.5, 50_000_000),
+    ("Sardor", "Aliyev", "Omborchi", 4_800_000, False, 0, 0),
+    ("Kamola", "Nazarova", "Buxgalter", 7_000_000, False, 0, 0),
 ]
 
 FIRST_NAMES = [
@@ -255,12 +257,14 @@ def receipt_number(when: datetime, used: set) -> str:
 def random_datetime_within(days_ago_max: int) -> datetime:
     """A random business-hours timestamp inside the history window."""
     day = NOW - timedelta(days=random.randint(0, days_ago_max))
-    return day.replace(
+    moment = day.replace(
         hour=random.randint(9, 20),
         minute=random.randint(0, 59),
         second=random.randint(0, 59),
         microsecond=0,
     )
+    # Today's business hours may not have happened yet.
+    return min(moment, NOW)
 
 
 def reset(db) -> None:
@@ -332,13 +336,16 @@ def seed(db) -> dict:
 
     # ---- employees and their salary history ------------------------------
     employees = []
-    for i, (first, last, position, salary) in enumerate(EMPLOYEES):
+    for i, (first, last, position, salary, is_seller, rate, plan) in enumerate(EMPLOYEES):
         employees.append(
             Employee(
                 first_name=first,
                 last_name=last,
                 position=position,
                 salary=money(salary),
+                is_seller=is_seller,
+                commission_rate=Decimal(str(rate)),
+                monthly_target=money(plan),
                 phone=f"+9989012345{20 + i:02d}",
                 email=f"{first.lower()}.{last.lower()}@enrico.uz",
                 address=f"Toshkent sh., {random.choice(DISTRICTS)} tumani",
@@ -350,6 +357,8 @@ def seed(db) -> dict:
     db.add_all(employees)
     db.flush()
     stats["employees"] = len(employees)
+    sellers = [e for e in employees if e.is_seller]
+    seller_weights = [4, 6, 3, 3][: len(sellers)]
 
     salary_payments = []
     for employee in employees:
@@ -498,6 +507,8 @@ def seed(db) -> dict:
             status=status_value,
             notes=None,
             user_id=random.choice(users).id,
+            # Uneven weights so the KPI leaderboard has a clear spread.
+            seller_id=random.choices(sellers, weights=seller_weights)[0].id,
             created_at=created,
         )
         db.add(sale)
@@ -550,6 +561,8 @@ def seed(db) -> dict:
             status=SaleStatus.CANCELLED,
             notes="Mijoz buyurtmadan voz kechdi",
             user_id=random.choice(users).id,
+            # Uneven weights so the KPI leaderboard has a clear spread.
+            seller_id=random.choices(sellers, weights=seller_weights)[0].id,
             created_at=created,
         )
         db.add(sale)

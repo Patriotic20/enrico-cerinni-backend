@@ -98,12 +98,16 @@ class ProductService:
 
         if filters.search:
             search_term = f"%{filters.search}%"
-            query = query.join(ProductVariant, ProductVariant.product_id == Product.id).filter(
+            # Outer joins: products without variants or brand must stay findable.
+            query = query.outerjoin(ProductVariant, ProductVariant.product_id == Product.id).outerjoin(
+                Brand, Brand.id == Product.brand_id
+            ).filter(
                 or_(
                     Product.name.ilike(search_term),
                     Product.description.ilike(search_term),
                     Product.sku.ilike(search_term),
-                    ProductVariant.sku.ilike(search_term)
+                    ProductVariant.sku.ilike(search_term),
+                    Brand.name.ilike(search_term),
                 )
             ).distinct()
 

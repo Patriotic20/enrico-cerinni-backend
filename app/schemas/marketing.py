@@ -67,13 +67,24 @@ class BroadcastHistoryItem(BaseModel):
 
 class TelegramConnectionStatus(BaseModel):
     connected: bool
+    configured: bool = True
     bot_username: Optional[str] = None
     error: Optional[str] = None
 
 
 class SmsConnectionStatus(BaseModel):
     connected: bool
+    configured: bool = True
     balance: Optional[int] = Field(None, description="Remaining SMS on the Eskiz account")
     sender: Optional[str] = None
     error: Optional[str] = None
 
+
+
+class IntegrationSettingsUpdate(BaseModel):
+    """None keeps the stored value, "" removes it (falls back to env)."""
+
+    telegram_bot_token: Optional[str] = Field(None, max_length=200)
+    eskiz_email: Optional[str] = Field(None, max_length=254)
+    eskiz_password: Optional[str] = Field(None, max_length=256)
+    sms_from_number: Optional[str] = Field(None, max_length=11)

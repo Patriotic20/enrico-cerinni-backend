@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from datetime import datetime
 from typing import Optional
 from decimal import Decimal
@@ -12,6 +12,9 @@ class EmployeeBase(BaseModel):
     email: Optional[EmailStr] = None
     salary: Decimal
     hire_date: datetime
+    is_seller: bool = True
+    commission_rate: Decimal = Field(default=Decimal("0"), ge=0, le=100)
+    monthly_target: Decimal = Field(default=Decimal("0"), ge=0)
 
 
 class EmployeeCreate(EmployeeBase):
@@ -31,6 +34,9 @@ class EmployeeUpdate(BaseModel):
     address: Optional[str] = None
     notes: Optional[str] = None
     is_active: Optional[bool] = None
+    is_seller: Optional[bool] = None
+    commission_rate: Optional[Decimal] = Field(default=None, ge=0, le=100)
+    monthly_target: Optional[Decimal] = Field(default=None, ge=0)
 
 
 class EmployeeResponse(EmployeeBase):
@@ -42,5 +48,14 @@ class EmployeeResponse(EmployeeBase):
     is_active: bool
     created_at: datetime
     updated_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SellerOption(BaseModel):
+    """What the checkout seller picker needs — nothing salary-related."""
+    id: int
+    name: str
+    position: str
 
     model_config = ConfigDict(from_attributes=True)

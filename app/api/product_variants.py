@@ -11,7 +11,7 @@ from app.schemas.product_variant import (
     ProductVariantBulkUpdate,
 )
 from app.schemas.common import ResponseModel
-from app.api.deps import get_current_active_user
+from app.api.deps import get_current_active_user, require_staff
 from app.models.user import User
 from app.utils.helpers import generate_sku
 
@@ -66,7 +66,7 @@ async def get_product_variants(
         return ResponseModel(success=False, message=f"Failed to fetch product variants: {str(e)}")
 
 
-@router.post("/", response_model=ResponseModel)
+@router.post("/", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 async def create_product_variant(
     variant_data: ProductVariantCreate,
     db: Session = Depends(get_db),
@@ -138,7 +138,7 @@ async def create_product_variant(
         return ResponseModel(success=False, message=f"Failed to create product variant: {str(e)}")
 
 
-@router.post("/bulk", response_model=ResponseModel)
+@router.post("/bulk", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 async def create_product_variants_bulk(
     bulk_data: ProductVariantBulkCreate,
     db: Session = Depends(get_db),
@@ -235,7 +235,7 @@ async def create_product_variants_bulk(
         return ResponseModel(success=False, message=f"Failed to create product variants: {str(e)}")
 
 
-@router.put("/{variant_id}", response_model=ResponseModel)
+@router.put("/{variant_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 async def update_product_variant(
     variant_id: int,
     variant_data: ProductVariantUpdate,
@@ -314,7 +314,7 @@ async def update_product_variant(
         return ResponseModel(success=False, message=f"Failed to update product variant: {str(e)}")
 
 
-@router.delete("/{variant_id}", response_model=ResponseModel)
+@router.delete("/{variant_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 async def delete_product_variant(
     variant_id: int,
     db: Session = Depends(get_db),

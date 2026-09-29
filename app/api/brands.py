@@ -4,14 +4,14 @@ from typing import List
 from app.database import get_db
 from app.models import Brand
 from app.schemas.brand import BrandCreate, BrandUpdate, BrandResponse
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_staff
 from app.models.user import User
 from app.schemas.common import ResponseModel
 
 router = APIRouter(prefix="/brands", tags=["brands"])
 
 
-@router.post("", response_model=ResponseModel)
+@router.post("", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 def create_brand(
     brand: BrandCreate,
     db: Session = Depends(get_db),
@@ -96,7 +96,7 @@ def get_brand(
         return ResponseModel(success=False, message=f"Failed to fetch brand: {str(e)}")
 
 
-@router.put("/{brand_id}", response_model=ResponseModel)
+@router.put("/{brand_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 def update_brand(
     brand_id: int,
     brand: BrandUpdate,
@@ -130,7 +130,7 @@ def update_brand(
         return ResponseModel(success=False, message=f"Failed to update brand: {str(e)}")
 
 
-@router.delete("/{brand_id}", response_model=ResponseModel)
+@router.delete("/{brand_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 def delete_brand(
     brand_id: int,
     db: Session = Depends(get_db),

@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
 from app.utils.auth import get_current_user_payload, get_token_from_cookie
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.services.auth_service import AuthService
 
 security = HTTPBearer(auto_error=False)
@@ -67,6 +67,24 @@ def get_current_active_user(current_user: User = Depends(get_current_user)) -> U
             status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user"
         )
     return current_user
+
+
+def require_roles(*roles: UserRole):
+    """Dependency factory: reject callers whose role is not in `roles`."""
+
+    def checker(current_user: User = Depends(get_current_user)) -> User:
+        if current_user.role not in roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions"
+            )
+        return current_user
+
+    return checker
+
+
+# Admins and managers; cashiers (UserRole.USER) only sell, manage clients and
+# collect debts.
+require_staff = require_roles(UserRole.ADMIN, UserRole.MANAGER)
 
 
 def get_current_admin_user(current_user: User = Depends(get_current_user)) -> User:

@@ -21,6 +21,12 @@ class Employee(Base):
     hire_date = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     is_active = Column(Boolean, nullable=False, server_default="true")
 
+    # Seller KPI: only sellers are offered at checkout; commission is a % of
+    # their revenue, monthly_target the revenue plan for every month.
+    is_seller = Column(Boolean, nullable=False, server_default="true")
+    commission_rate = Column(Numeric(5, 2), nullable=False, server_default="0")
+    monthly_target = Column(Numeric(14, 2), nullable=False, server_default="0")
+
     notes = Column(Text, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())

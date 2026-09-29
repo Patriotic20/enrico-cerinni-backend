@@ -4,14 +4,14 @@ from typing import List
 from app.database import get_db
 from app.models import Color
 from app.schemas.color import ColorCreate, ColorUpdate, ColorResponse
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_staff
 from app.models.user import User
 from app.schemas.common import ResponseModel
 
 router = APIRouter(prefix="/colors", tags=["colors"])
 
 
-@router.post("", response_model=ResponseModel)
+@router.post("", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 def create_color(
     color: ColorCreate,
     db: Session = Depends(get_db),
@@ -96,7 +96,7 @@ def get_color(
         return ResponseModel(success=False, message=f"Failed to fetch color: {str(e)}")
 
 
-@router.put("/{color_id}", response_model=ResponseModel)
+@router.put("/{color_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 def update_color(
     color_id: int,
     color: ColorUpdate,
@@ -130,7 +130,7 @@ def update_color(
         return ResponseModel(success=False, message=f"Failed to update color: {str(e)}")
 
 
-@router.delete("/{color_id}", response_model=ResponseModel)
+@router.delete("/{color_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 def delete_color(
     color_id: int,
     db: Session = Depends(get_db),

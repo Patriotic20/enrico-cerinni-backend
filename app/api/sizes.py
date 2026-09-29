@@ -5,7 +5,7 @@ from app.database import get_db
 from app.models import Size
 from app.schemas.size import SizeCreate, SizeUpdate, SizeResponse
 from app.schemas.common import ResponseModel
-from app.api.deps import get_current_active_user
+from app.api.deps import get_current_active_user, require_staff
 from app.models.user import User
 
 router = APIRouter(prefix="/sizes", tags=["sizes"])
@@ -36,7 +36,7 @@ async def get_sizes(
         return ResponseModel(success=False, message=f"Failed to fetch sizes: {str(e)}")
 
 
-@router.post("", response_model=ResponseModel)
+@router.post("", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 async def create_size(
     size_data: SizeCreate,
     db: Session = Depends(get_db),
@@ -96,7 +96,7 @@ async def get_size(
         return ResponseModel(success=False, message=f"Failed to fetch size: {str(e)}")
 
 
-@router.put("/{size_id}", response_model=ResponseModel)
+@router.put("/{size_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 async def update_size(
     size_id: int,
     size_data: SizeUpdate,
@@ -136,7 +136,7 @@ async def update_size(
         return ResponseModel(success=False, message=f"Failed to update size: {str(e)}")
 
 
-@router.delete("/{size_id}", response_model=ResponseModel)
+@router.delete("/{size_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 async def delete_size(
     size_id: int,
     db: Session = Depends(get_db),

@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_active_user
+from app.api.deps import get_current_active_user, get_current_admin_user, require_staff
 from app.database import get_db
 from app.models.user import User
 from app.schemas.common import ResponseModel
@@ -16,13 +16,18 @@ from app.schemas.marketing import (
     MarketingBroadcastResponse,
     MarketingClient,
     MarketingStats,
+    IntegrationSettingsUpdate,
     SmsConnectionStatus,
     TelegramConnectionStatus,
 )
+from app.config import settings
+from app.services.eskiz_sms import eskiz_client
+from app.models.client import Client
+from app.services import integration_settings, telegram_link
 from app.services.marketing_service import MarketingService
 
 
-router = APIRouter(prefix="/marketing", tags=["Marketing"])
+router = APIRouter(prefix="/marketing", tags=["Marketing"], dependencies=[Depends(require_staff)])
 
 
 def _to_response(total: int, results: dict) -> MarketingBroadcastResponse:
@@ -42,6 +47,14 @@ def _to_response(total: int, results: dict) -> MarketingBroadcastResponse:
 
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024  # matches the 10MB limit enforced by the UI
+
+
+def _require_configured(channels: List[str]) -> None:
+    """Refuse up front instead of recording a broadcast where every send failed."""
+    if "sms" in channels and not MarketingService.sms_configured():
+        raise HTTPException(status_code=400, detail="SMS provayder (Eskiz) sozlanmagan")
+    if "telegram" in channels and not settings.notification.telegram_bot_token:
+        raise HTTPException(status_code=400, detail="Telegram bot sozlanmagan")
 
 
 def _parse_client_ids(raw: Optional[str]) -> Optional[List[int]]:
@@ -65,6 +78,7 @@ async def _run_broadcast(
     user_id: Optional[int],
     image: Optional[Tuple[str, bytes, str]] = None,
 ) -> MarketingBroadcastResponse:
+    _require_configured(channels)
     total, results = await service.broadcast(
         message=message,
         channels=channels,
@@ -125,6 +139,10 @@ async def broadcast_telegram(
     """
     service = MarketingService(db)
     target_ids = None if send_to_all else _parse_client_ids(client_ids)
+    try:
+        await telegram_link.sync(db)  # pick up clients who just pressed Start
+    except Exception:
+        pass
 
     image_payload = None
     if image is not None and image.filename:
@@ -220,6 +238,53 @@ async def test_sms_connection(
     )
 
 
+@router.get("/sms/templates", response_model=ResponseModel)
+async def get_sms_templates(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Templates from the Eskiz cabinet; only approved texts are delivered."""
+    integration_settings.apply(db)
+    if not eskiz_client.is_configured():
+        return ResponseModel(success=True, data=[], message="SMS provayder (Eskiz) sozlanmagan")
+    try:
+        templates = await eskiz_client.get_templates()
+    except Exception as exc:
+        return ResponseModel(success=False, data=[], message=str(exc))
+    return ResponseModel(success=True, data=templates, message="SMS templates retrieved")
+
+
+@router.post("/telegram/sync", response_model=ResponseModel)
+async def sync_telegram_links(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Link clients who pressed Start via their invite link."""
+    integration_settings.apply(db)
+    try:
+        linked = await telegram_link.sync(db)
+    except Exception as exc:
+        return ResponseModel(success=False, data=[], message=str(exc))
+    return ResponseModel(success=True, data=linked, message=f"{len(linked)} ta mijoz ulandi")
+
+
+@router.get("/telegram/link/{client_id}", response_model=ResponseModel)
+async def get_telegram_link(
+    client_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Personal t.me deep link the client opens to connect to the bot."""
+    if not db.get(Client, client_id):
+        raise HTTPException(status_code=404, detail="Mijoz topilmadi")
+    integration_settings.apply(db)
+    try:
+        url = await telegram_link.link_url(client_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return ResponseModel(success=True, data={"url": url}, message="Link generated")
+
+
 @router.get("/telegram/test", response_model=ResponseModel)
 async def test_telegram_connection(
     db: Session = Depends(get_db),
@@ -235,4 +300,35 @@ async def test_telegram_connection(
             if status["connected"]
             else status.get("error") or "Telegram bot connection failed"
         ),
+    )
+
+
+@router.get("/settings", response_model=ResponseModel)
+async def get_integration_settings(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Which integrations are configured. Secrets are never returned."""
+    return ResponseModel(
+        success=True,
+        data=integration_settings.public_view(db),
+        message="Integration settings retrieved",
+    )
+
+
+@router.put("/settings", response_model=ResponseModel)
+async def update_integration_settings(
+    payload: IntegrationSettingsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Save Eskiz / Telegram credentials (encrypted). Omitted fields are kept, "" clears."""
+    try:
+        integration_settings.update(db, payload.model_dump(), current_user.id)
+    except integration_settings.SettingsError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return ResponseModel(
+        success=True,
+        data=integration_settings.public_view(db),
+        message="Sozlamalar saqlandi",
     )

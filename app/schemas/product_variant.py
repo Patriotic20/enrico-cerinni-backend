@@ -37,6 +37,7 @@ class ProductVariantResponse(ProductVariantBase):
     updated_at: Optional[datetime] = None
     color_name: Optional[str] = None
     size_name: Optional[str] = None
+    color_hex: Optional[str] = None
 
     class Config:
         from_attributes = True

@@ -6,10 +6,10 @@ from app.database import get_db
 from app.services.dashboard_service import DashboardService
 from app.schemas.dashboard import DashboardResponse, RecentTransaction
 from app.schemas.common import ResponseModel
-from app.api.deps import get_current_active_user
+from app.api.deps import get_current_active_user, require_staff
 from app.models.user import User
 
-router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
+router = APIRouter(prefix="/dashboard", tags=["Dashboard"], dependencies=[Depends(require_staff)])
 
 
 @router.get("/stats", response_model=ResponseModel)

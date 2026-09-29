@@ -4,14 +4,14 @@ from typing import List
 from app.database import get_db
 from app.models import Season
 from app.schemas.season import SeasonCreate, SeasonUpdate, SeasonResponse
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_staff
 from app.models.user import User
 from app.schemas.common import ResponseModel
 
 router = APIRouter(prefix="/seasons", tags=["seasons"])
 
 
-@router.post("", response_model=ResponseModel)
+@router.post("", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 def create_season(
     season: SeasonCreate,
     db: Session = Depends(get_db),
@@ -95,7 +95,7 @@ def get_season(
         return ResponseModel(success=False, message=f"Failed to fetch season: {str(e)}")
 
 
-@router.put("/{season_id}", response_model=ResponseModel)
+@router.put("/{season_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 def update_season(
     season_id: int,
     season: SeasonUpdate,
@@ -128,7 +128,7 @@ def update_season(
         return ResponseModel(success=False, message=f"Failed to update season: {str(e)}")
 
 
-@router.delete("/{season_id}", response_model=ResponseModel)
+@router.delete("/{season_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 def delete_season(
     season_id: int,
     db: Session = Depends(get_db),

@@ -38,7 +38,8 @@ class SaleBase(BaseModel):
 
 
 class SaleCreate(SaleBase):
-    pass
+    # Required for new sales: per-seller KPI is computed from it.
+    seller_id: int
 
 
 class SaleUpdate(BaseModel):
@@ -58,6 +59,8 @@ class SaleResponse(SaleBase):
     updated_at: Optional[str] = None
     items: List[SaleItemResponse]
     client_name: Optional[str] = None
+    seller_id: Optional[int] = None
+    seller_name: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -65,6 +68,7 @@ class SaleResponse(SaleBase):
 
 class SaleFilter(BaseModel):
     client_id: Optional[int] = None
+    seller_id: Optional[int] = None
     payment_method: Optional[PaymentMethod] = None
     status: Optional[SaleStatus] = None
     start_date: Optional[str] = None

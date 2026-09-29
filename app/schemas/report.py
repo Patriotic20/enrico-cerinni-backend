@@ -55,7 +55,9 @@ class SalesMetric(BaseModel):
     total_revenue: Decimal
     total_sales: int
     avg_order_value: Decimal
-    conversion_rate: float
+    items_sold: int
+    unique_clients: int
+    outstanding: Decimal  # Unpaid part of the period's sales
 
 
 class TopProduct(BaseModel):

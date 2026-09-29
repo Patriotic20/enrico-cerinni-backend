@@ -16,13 +16,49 @@ from app.schemas.sale import (
     DebtPaymentRequest,
 )
 from app.schemas.common import ResponseModel, PaginatedResponse
-from app.api.deps import get_current_active_user
+from app.api.deps import get_current_active_user, require_staff
 from app.models.user import User
 from app.models import Sale, Client, Transaction
 from app.models.sale import SaleStatus
 from app.models.transaction import TransactionType
 
 router = APIRouter(prefix="/sales", tags=["Sales"])
+
+
+def _sale_response(sale: Sale) -> SaleResponse:
+    """One place that turns a Sale row into its API shape."""
+    return SaleResponse(
+        id=sale.id,
+        receipt_number=sale.receipt_number,
+        client_id=sale.client_id,
+        total_amount=sale.total_amount,
+        paid_amount=sale.paid_amount,
+        payment_method=sale.payment_method,
+        status=sale.status,
+        notes=sale.notes,
+        created_at=sale.created_at.isoformat(),
+        updated_at=sale.updated_at.isoformat() if sale.updated_at else None,
+        items=[
+            SaleItemResponse(
+                id=item.id,
+                product_variant_id=item.product_variant_id,
+                quantity=item.quantity,
+                unit_price=item.unit_price,
+                total_price=item.total_price,
+                product_variant_sku=item.product_variant.sku,
+                product_name=item.product_variant.product.name,
+                color_name=item.product_variant.color.name,
+                size_name=item.product_variant.size.name,
+                created_at=item.created_at.isoformat(),
+            )
+            for item in sale.items
+        ],
+        client_name=f"{sale.client.first_name} {sale.client.last_name}"
+        if sale.client
+        else None,
+        seller_id=sale.seller_id,
+        seller_name=sale.seller.name if sale.seller else None,
+    )
 
 
 @router.post("/", response_model=ResponseModel)
@@ -36,41 +72,9 @@ async def create_sale(
     try:
         sale = sale_service.create_sale(sale_data, current_user)
 
-        sale_items = []
-        for item in sale.items:
-            sale_items.append(
-                SaleItemResponse(
-                    id=item.id,
-                    product_variant_id=item.product_variant_id,
-                    quantity=item.quantity,
-                    unit_price=item.unit_price,
-                    total_price=item.total_price,
-                    product_variant_sku=item.product_variant.sku,
-                    product_name=item.product_variant.product.name,
-                    color_name=item.product_variant.color.name,
-                    size_name=item.product_variant.size.name,
-                    created_at=item.created_at.isoformat(),
-                )
-            )
-
         return ResponseModel(
             success=True,
-            data=SaleResponse(
-                id=sale.id,
-                receipt_number=sale.receipt_number,
-                client_id=sale.client_id,
-                total_amount=sale.total_amount,
-                paid_amount=sale.paid_amount,
-                payment_method=sale.payment_method,
-                status=sale.status,
-                notes=sale.notes,
-                created_at=sale.created_at.isoformat(),
-                updated_at=sale.updated_at.isoformat() if sale.updated_at else None,
-                items=sale_items,
-                client_name=f"{sale.client.first_name} {sale.client.last_name}"
-                if sale.client
-                else None,
-            ),
+            data=_sale_response(sale),
             message="Sale created successfully",
         )
     except HTTPException as e:
@@ -79,9 +83,10 @@ async def create_sale(
 
 
 
-@router.get("/", response_model=ResponseModel)
+@router.get("/", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 async def get_sales(
     client_id: Optional[int] = Query(None, description="Filter by client ID"),
+    seller_id: Optional[int] = Query(None, description="Filter by seller (employee) ID"),
     payment_method: Optional[str] = Query(None, description="Filter by payment method"),
     status: Optional[str] = Query(None, description="Filter by sale status"),
     start_date: Optional[str] = Query(None, description="Filter by start date"),
@@ -97,6 +102,7 @@ async def get_sales(
     """Get all sales with filtering and pagination."""
     filters = SaleFilter(
         client_id=client_id,
+        seller_id=seller_id,
         payment_method=payment_method,
         status=status,
         start_date=start_date,
@@ -111,44 +117,7 @@ async def get_sales(
     sale_service = SaleService(db)
     sales, pagination = sale_service.get_sales(filters)
 
-    # Convert to response format
-    sale_responses = []
-    for sale in sales:
-        sale_items = []
-        for item in sale.items:
-            sale_items.append(
-                SaleItemResponse(
-                    id=item.id,
-                    product_variant_id=item.product_variant_id,
-                    quantity=item.quantity,
-                    unit_price=item.unit_price,
-                    total_price=item.total_price,
-                    product_variant_sku=item.product_variant.sku,
-                    product_name=item.product_variant.product.name,
-                    color_name=item.product_variant.color.name,
-                    size_name=item.product_variant.size.name,
-                    created_at=item.created_at.isoformat(),
-                )
-            )
-
-        sale_responses.append(
-            SaleResponse(
-                id=sale.id,
-                receipt_number=sale.receipt_number,
-                client_id=sale.client_id,
-                total_amount=sale.total_amount,
-                paid_amount=sale.paid_amount,
-                payment_method=sale.payment_method,
-                status=sale.status,
-                notes=sale.notes,
-                created_at=sale.created_at.isoformat(),
-                updated_at=sale.updated_at.isoformat() if sale.updated_at else None,
-                items=sale_items,
-                client_name=f"{sale.client.first_name} {sale.client.last_name}"
-                if sale.client
-                else None,
-            )
-        )
+    sale_responses = [_sale_response(sale) for sale in sales]
 
     return ResponseModel(
         success=True,
@@ -157,36 +126,35 @@ async def get_sales(
     )
 
 
-@router.get("/stats/", response_model=ResponseModel)
+@router.get("/stats/", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 async def get_sales_stats(
-    start_date: Optional[date] = Query(None, description="Start date for stats"),
-    end_date: Optional[date] = Query(None, description="End date for stats"),
+    client_id: Optional[int] = Query(None),
+    seller_id: Optional[int] = Query(None),
+    payment_method: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    search: Optional[str] = Query(None),
+    min_amount: Optional[Decimal] = Query(None),
+    max_amount: Optional[Decimal] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Get sales statistics."""
-    query = db.query(Sale)
-
-    if start_date:
-        query = query.filter(Sale.created_at >= start_date)
-    if end_date:
-        query = query.filter(Sale.created_at <= end_date)
-
-    sales = query.all()
-
-    total_sales = len(sales)
-    total_revenue = sum(sale.total_amount for sale in sales)
-    avg_order_value = total_revenue / total_sales if total_sales > 0 else 0
-    completed_sales = len([s for s in sales if s.status == "completed"])
-
+    """Sales statistics over the same filters as the list."""
+    filters = SaleFilter(
+        client_id=client_id,
+        seller_id=seller_id,
+        payment_method=payment_method,
+        status=status,
+        start_date=start_date,
+        end_date=end_date,
+        search=search,
+        min_amount=min_amount,
+        max_amount=max_amount,
+    )
     return ResponseModel(
         success=True,
-        data={
-            "total_sales": total_sales,
-            "total_revenue": float(total_revenue),
-            "avg_order_value": float(avg_order_value),
-            "completed_sales": completed_sales,
-        },
+        data=SaleService(db).get_stats(filters),
         message="Sales statistics retrieved successfully",
     )
 
@@ -335,7 +303,7 @@ async def get_client_debt_history(
     )
 
 
-@router.patch("/{sale_id}/cancel", response_model=ResponseModel)
+@router.patch("/{sale_id}/cancel", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 async def cancel_sale(
     sale_id: int,
     db: Session = Depends(get_db),
@@ -365,42 +333,9 @@ async def pay_sale_debt(
     try:
         sale = sale_service.pay_debt(sale_id, payment_amount, current_user)
         
-        # Convert sale items to response format
-        sale_items = []
-        for item in sale.items:
-            sale_items.append(
-                SaleItemResponse(
-                    id=item.id,
-                    product_variant_id=item.product_variant_id,
-                    quantity=item.quantity,
-                    unit_price=item.unit_price,
-                    total_price=item.total_price,
-                    product_variant_sku=item.product_variant.sku,
-                    product_name=item.product_variant.product.name,
-                    color_name=item.product_variant.color.name,
-                    size_name=item.product_variant.size.name,
-                    created_at=item.created_at.isoformat(),
-                )
-            )
-
         return ResponseModel(
             success=True,
-            data=SaleResponse(
-                id=sale.id,
-                receipt_number=sale.receipt_number,
-                client_id=sale.client_id,
-                total_amount=sale.total_amount,
-                paid_amount=sale.paid_amount,
-                payment_method=sale.payment_method,
-                status=sale.status,
-                notes=sale.notes,
-                created_at=sale.created_at.isoformat(),
-                updated_at=sale.updated_at.isoformat() if sale.updated_at else None,
-                items=sale_items,
-                client_name=f"{sale.client.first_name} {sale.client.last_name}"
-                if sale.client
-                else None,
-            ),
+            data=_sale_response(sale),
             message="Debt payment processed successfully",
         )
     except HTTPException as e:
@@ -417,44 +352,7 @@ async def get_client_debts(
     sale_service = SaleService(db)
     debts = sale_service.get_client_debts(client_id)
     
-    # Convert to response format
-    debt_responses = []
-    for sale in debts:
-        sale_items = []
-        for item in sale.items:
-            sale_items.append(
-                SaleItemResponse(
-                    id=item.id,
-                    product_variant_id=item.product_variant_id,
-                    quantity=item.quantity,
-                    unit_price=item.unit_price,
-                    total_price=item.total_price,
-                    product_variant_sku=item.product_variant.sku,
-                    product_name=item.product_variant.product.name,
-                    color_name=item.product_variant.color.name,
-                    size_name=item.product_variant.size.name,
-                    created_at=item.created_at.isoformat(),
-                )
-            )
-
-        debt_responses.append(
-            SaleResponse(
-                id=sale.id,
-                receipt_number=sale.receipt_number,
-                client_id=sale.client_id,
-                total_amount=sale.total_amount,
-                paid_amount=sale.paid_amount,
-                payment_method=sale.payment_method,
-                status=sale.status,
-                notes=sale.notes,
-                created_at=sale.created_at.isoformat(),
-                updated_at=sale.updated_at.isoformat() if sale.updated_at else None,
-                items=sale_items,
-                client_name=f"{sale.client.first_name} {sale.client.last_name}"
-                if sale.client
-                else None,
-            )
-        )
+    debt_responses = [_sale_response(sale) for sale in debts]
 
     return ResponseModel(
         success=True,
@@ -636,7 +534,7 @@ async def get_payment_trend(
     )
 
 
-@router.get("/{sale_id}", response_model=ResponseModel)
+@router.get("/{sale_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 async def get_sale(
     sale_id: int,
     db: Session = Depends(get_db),
@@ -649,41 +547,8 @@ async def get_sale(
     if not sale:
         return ResponseModel(success=False, message="Sale not found")
 
-    # Convert sale items to response format
-    sale_items = []
-    for item in sale.items:
-        sale_items.append(
-            SaleItemResponse(
-                id=item.id,
-                product_variant_id=item.product_variant_id,
-                quantity=item.quantity,
-                unit_price=item.unit_price,
-                total_price=item.total_price,
-                product_variant_sku=item.product_variant.sku,
-                product_name=item.product_variant.product.name,
-                color_name=item.product_variant.color.name,
-                size_name=item.product_variant.size.name,
-                created_at=item.created_at.isoformat(),
-            )
-        )
-
     return ResponseModel(
         success=True,
-        data=SaleResponse(
-            id=sale.id,
-            receipt_number=sale.receipt_number,
-            client_id=sale.client_id,
-            total_amount=sale.total_amount,
-            paid_amount=sale.paid_amount,
-            payment_method=sale.payment_method,
-            status=sale.status,
-            notes=sale.notes,
-            created_at=sale.created_at.isoformat(),
-            updated_at=sale.updated_at.isoformat() if sale.updated_at else None,
-            items=sale_items,
-            client_name=f"{sale.client.first_name} {sale.client.last_name}"
-            if sale.client
-            else None,
-        ),
+        data=_sale_response(sale),
         message="Sale retrieved successfully",
     )

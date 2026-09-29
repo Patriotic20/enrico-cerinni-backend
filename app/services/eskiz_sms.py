@@ -102,11 +102,43 @@ class EskizSmsClient:
             detail = resp.text[:200]
         return False, f"Eskiz rejected the message (HTTP {resp.status_code}): {detail}"
 
+    async def get_templates(self) -> list:
+        """Templates registered in the Eskiz cabinet. Eskiz only delivers texts
+        that match an approved template, so the UI sends exactly one of these."""
+        if not self.is_configured():
+            return []
+        async with httpx.AsyncClient(timeout=15) as client:
+            token = await self._get_token(client)
+            resp = await client.get(
+                f"{BASE_URL}/user/templates", headers={"Authorization": f"Bearer {token}"}
+            )
+            if resp.status_code == 401:
+                token = await self._get_token(client, force=True)
+                resp = await client.get(
+                    f"{BASE_URL}/user/templates", headers={"Authorization": f"Bearer {token}"}
+                )
+        if resp.status_code != 200:
+            raise RuntimeError(f"Eskiz templates request failed: HTTP {resp.status_code}")
+        body = resp.json()
+        rows = body.get("result") or body.get("data") or []
+        return [
+            {
+                "id": r.get("id"),
+                "text": r.get("template") or r.get("original_text") or "",
+                "status": r.get("status"),
+                # Eskiz statuses: service/reklama = approved, moderation/inproccess = pending, rejected
+                "approved": r.get("status") not in ("moderation", "inproccess", "rejected"),
+            }
+            for r in rows
+            if isinstance(r, dict)
+        ]
+
     async def test_connection(self) -> dict:
         """Verify credentials by logging in, and fetch the remaining SMS limit."""
         if not self.is_configured():
             return {
                 "connected": False,
+                "configured": False,
                 "error": "Eskiz credentials are not configured "
                 "(NOTIFICATION__ESKIZ_EMAIL / NOTIFICATION__ESKIZ_PASSWORD)",
             }
@@ -115,9 +147,9 @@ class EskizSmsClient:
             try:
                 token = await self._get_token(client, force=True)
             except EskizAuthError as exc:
-                return {"connected": False, "error": str(exc)}
+                return {"connected": False, "configured": True, "error": str(exc)}
             except Exception as exc:
-                return {"connected": False, "error": f"Eskiz request failed: {exc}"}
+                return {"connected": False, "configured": True, "error": f"Eskiz request failed: {exc}"}
 
             balance = None
             try:
@@ -132,6 +164,7 @@ class EskizSmsClient:
 
         return {
             "connected": True,
+            "configured": True,
             "balance": balance,
             "sender": settings.notification.sms_from_number or DEFAULT_SENDER,
         }

@@ -15,7 +15,7 @@ from app.schemas.client import (
 from app.schemas.common import ResponseModel
 from datetime import datetime
 from decimal import Decimal
-from app.api.deps import get_current_active_user
+from app.api.deps import get_current_active_user, require_staff
 from app.models.user import User
 
 router = APIRouter(prefix="/clients", tags=["Clients"])
@@ -90,6 +90,19 @@ async def get_clients(
         success=True,
         data=PaginatedClientResponse(items=client_responses, pagination=pagination),
         message="Clients retrieved successfully",
+    )
+
+
+@router.get("/insights", response_model=ResponseModel)
+async def get_client_insights(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """Every client with spend, order count, debt and purchase dates."""
+    return ResponseModel(
+        success=True,
+        data=ClientService(db).get_insights(),
+        message="Client insights retrieved successfully",
     )
 
 
@@ -188,7 +201,7 @@ async def update_client(
         return ResponseModel(success=False, message=e.detail)
 
 
-@router.delete("/{client_id}", response_model=ResponseModel)
+@router.delete("/{client_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 async def delete_client(
     client_id: int,
     db: Session = Depends(get_db),
@@ -204,7 +217,7 @@ async def delete_client(
     return ResponseModel(success=True, message="Client deleted successfully")
 
 
-@router.patch("/{client_id}/debt", response_model=ResponseModel)
+@router.patch("/{client_id}/debt", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 async def update_client_debt(
     client_id: int,
     debt_data: ClientDebtUpdate,

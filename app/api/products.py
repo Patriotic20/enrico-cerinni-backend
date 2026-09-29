@@ -12,14 +12,18 @@ from app.schemas.product import (
 )
 from app.schemas.product_variant import ProductVariantResponse
 from app.schemas.common import ResponseModel, PaginatedResponse
-from app.api.deps import get_current_active_user
+from app.api.deps import get_current_active_user, require_staff
 from app.models.user import User
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
 
 @router.get("/barcode/{barcode}", response_model=ResponseModel)
-async def scan_barcode(barcode: str, db: Session = Depends(get_db)):
+async def scan_barcode(
+    barcode: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
     product_service = ProductService(db)
     product = product_service.get_product_by_variant_sku(barcode)
     if not product:
@@ -200,7 +204,7 @@ async def get_product(
     )
 
 
-@router.post("/", response_model=ResponseModel)
+@router.post("/", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 async def create_product(
     product_data: ProductCreate,
     db: Session = Depends(get_db),
@@ -235,7 +239,7 @@ async def create_product(
         return ResponseModel(success=False, message=e.detail)
 
 
-@router.put("/{product_id}", response_model=ResponseModel)
+@router.put("/{product_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 async def update_product(
     product_id: int,
     product_data: ProductUpdate,
@@ -270,7 +274,7 @@ async def update_product(
     )
 
 
-@router.delete("/{product_id}", response_model=ResponseModel)
+@router.delete("/{product_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
 async def delete_product(
     product_id: int,
     db: Session = Depends(get_db),

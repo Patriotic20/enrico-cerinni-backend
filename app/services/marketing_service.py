@@ -9,11 +9,13 @@ from app.models.broadcast import BroadcastHistory
 from app.models.client import Client
 from app.config import settings
 from app.services.eskiz_sms import eskiz_client
+from app.services import integration_settings
 
 
 class MarketingService:
     def __init__(self, db: Session):
         self.db = db
+        integration_settings.apply(db)  # credentials saved from the UI
 
     def _get_recipients(self, client_ids: List[int] | None) -> List[Client]:
         query = self.db.query(Client).filter(Client.is_active == True)
@@ -69,6 +71,13 @@ class MarketingService:
                 return 200 <= resp.status_code < 300
             except Exception:
                 return False
+
+    @staticmethod
+    def sms_configured() -> bool:
+        n = settings.notification
+        return eskiz_client.is_configured() or bool(
+            n.sms_provider != "eskiz" and n.sms_base_url and n.sms_api_key
+        )
 
     async def test_sms_connection(self) -> dict:
         """Verify the configured Eskiz credentials and fetch the remaining limit."""
@@ -127,23 +136,23 @@ class MarketingService:
         """Call getMe on the Telegram Bot API to verify the configured token."""
         token = settings.notification.telegram_bot_token
         if not token:
-            return {"connected": False, "error": "Telegram bot token is not configured"}
+            return {"connected": False, "configured": False, "error": "Telegram bot token is not configured"}
 
         url = f"https://api.telegram.org/bot{token}/getMe"
         async with httpx.AsyncClient(timeout=10) as client:
             try:
                 resp = await client.get(url)
             except Exception as exc:
-                return {"connected": False, "error": str(exc)}
+                return {"connected": False, "configured": True, "error": str(exc)}
 
         if resp.status_code != 200:
-            return {"connected": False, "error": f"Telegram API returned HTTP {resp.status_code}"}
+            return {"connected": False, "configured": True, "error": f"Telegram API returned HTTP {resp.status_code}"}
 
         body = resp.json()
         if not body.get("ok"):
-            return {"connected": False, "error": body.get("description", "Telegram API rejected the token")}
+            return {"connected": False, "configured": True, "error": body.get("description", "Telegram API rejected the token")}
 
-        return {"connected": True, "bot_username": body.get("result", {}).get("username")}
+        return {"connected": True, "configured": True, "bot_username": body.get("result", {}).get("username")}
 
     def record_broadcast(
         self,

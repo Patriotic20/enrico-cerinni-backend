@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from app.models.sale import Sale, SaleItem, SaleStatus, PaymentMethod
 from app.models.product_variant import ProductVariant
 from app.models.client import Client
+from app.models.employee import Employee
 from app.models.transaction import Transaction, TransactionType
 from app.schemas.sale import SaleCreate, SaleUpdate, SaleFilter
 from app.utils.helpers import (
@@ -31,6 +32,12 @@ class SaleService:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST, detail="Client not found"
                 )
+
+        seller = self.db.query(Employee).filter(Employee.id == sale_data.seller_id).first()
+        if not seller or not seller.is_active or not seller.is_seller:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Seller not found"
+            )
 
         total_amount = Decimal("0")
         sale_items = []
@@ -90,6 +97,7 @@ class SaleService:
             status=sale_status,
             notes=sale_data.notes,
             user_id=current_user.id,
+            seller_id=seller.id,
         )
 
         self.db.add(db_sale)
@@ -129,13 +137,16 @@ class SaleService:
         """Get a sale by ID."""
         return self.db.query(Sale).filter(Sale.id == sale_id).first()
 
-    def get_sales(self, filters: SaleFilter) -> Tuple[List[Sale], dict]:
-        """Get sales with filtering and pagination."""
+    def filtered_query(self, filters: SaleFilter):
+        """Sales query with every list filter applied (no ordering/paging)."""
         query = self.db.query(Sale)
 
         # Apply filters
         if filters.client_id:
             query = query.filter(Sale.client_id == filters.client_id)
+
+        if filters.seller_id:
+            query = query.filter(Sale.seller_id == filters.seller_id)
 
         if filters.payment_method:
             query = query.filter(Sale.payment_method == filters.payment_method)
@@ -148,8 +159,12 @@ class SaleService:
             query = query.filter(Sale.created_at >= start_date)
 
         if filters.end_date:
+            # A bare date means "through that day", not "up to its midnight".
             end_date = datetime.fromisoformat(filters.end_date)
-            query = query.filter(Sale.created_at <= end_date)
+            if len(filters.end_date) == 10:
+                query = query.filter(Sale.created_at < end_date + timedelta(days=1))
+            else:
+                query = query.filter(Sale.created_at <= end_date)
 
         # Free-text search over the receipt number and the client's name, which
         # is what the sales page's search box offers.
@@ -169,6 +184,12 @@ class SaleService:
         if filters.max_amount is not None:
             query = query.filter(Sale.total_amount <= filters.max_amount)
 
+        return query
+
+    def get_sales(self, filters: SaleFilter) -> Tuple[List[Sale], dict]:
+        """Get sales with filtering and pagination."""
+        query = self.filtered_query(filters)
+
         # Get total count
         total = query.count()
 
@@ -184,6 +205,44 @@ class SaleService:
         pagination = calculate_pagination_info(total, filters.page, filters.size)
 
         return sales, pagination
+
+    def get_stats(self, filters: SaleFilter) -> dict:
+        """Aggregates over the same filtered set the list shows.
+
+        Cancelled sales are counted separately and excluded from money totals.
+        """
+        rows = (
+            self.filtered_query(filters)
+            .with_entities(
+                Sale.status,
+                func.count(Sale.id),
+                func.coalesce(func.sum(Sale.total_amount), 0),
+                func.coalesce(func.sum(Sale.paid_amount), 0),
+            )
+            .group_by(Sale.status)
+            .all()
+        )
+        count = revenue = paid = Decimal(0)
+        cancelled = debt_sales = 0
+        for st, n, total, paid_sum in rows:
+            st = st.value if hasattr(st, "value") else st
+            if st == SaleStatus.CANCELLED.value:
+                cancelled += n
+                continue
+            count += n
+            revenue += Decimal(total)
+            paid += Decimal(paid_sum)
+            if st in (SaleStatus.DEBT.value, SaleStatus.PARTIALLY_PAID.value):
+                debt_sales += n
+        return {
+            "total_sales": int(count),
+            "total_revenue": float(revenue),
+            "paid_amount": float(paid),
+            "outstanding": float(revenue - paid),
+            "avg_order_value": float(revenue / count) if count else 0.0,
+            "debt_sales": debt_sales,
+            "cancelled_sales": cancelled,
+        }
 
     def cancel_sale(self, sale_id: int, current_user: User) -> Optional[Sale]:
         """Cancel a sale and restore stock."""

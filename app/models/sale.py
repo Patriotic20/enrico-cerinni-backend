@@ -46,11 +46,15 @@ class Sale(Base):
     notes = Column(Text, nullable=True)
     
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # Who sold it (an employee), as opposed to user_id — who rang it up.
+    # Nullable only for sales made before sellers were tracked.
+    seller_id = Column(Integer, ForeignKey("employees.id"), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     # Relationships
     client = relationship("Client", backref="sales")
+    seller = relationship("Employee")
     items = relationship("SaleItem", backref="sale", cascade="all, delete-orphan")
 
 

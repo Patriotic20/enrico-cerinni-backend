@@ -19,11 +19,27 @@ from app.schemas.report import (
     CustomReportConfig
 )
 from app.schemas.common import ResponseModel
-from app.api.deps import get_current_active_user
+from app.api.deps import get_current_active_user, require_staff
 from app.models.user import User
 from app.models.report import ReportType, ReportExecution, ReportStatus
 
-router = APIRouter(prefix="/reports", tags=["Reports"])
+router = APIRouter(prefix="/reports", tags=["Reports"], dependencies=[Depends(require_staff)])
+
+
+
+def _date_filters(start_date: Optional[str], end_date: Optional[str]) -> ReportFilters:
+    """ReportFilters from the YYYY-MM-DD query params every report accepts."""
+    from app.schemas.report import DateRangeFilter
+    filters = ReportFilters()
+    if start_date or end_date:
+        try:
+            filters.date_range = DateRangeFilter(
+                start_date=datetime.fromisoformat(start_date) if start_date else None,
+                end_date=datetime.fromisoformat(end_date) if end_date else None,
+            )
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format")
+    return filters
 
 
 @router.post("/generate", response_model=ResponseModel)
@@ -129,21 +145,7 @@ async def get_sales_report(
     """Get sales report with optional filters."""
     report_service = ReportService(db)
     
-    # Build filters
-    filters = ReportFilters()
-    if start_date or end_date:
-        from app.schemas.report import DateRangeFilter
-        filters.date_range = DateRangeFilter()
-        if start_date:
-            try:
-                filters.date_range.start_date = datetime.fromisoformat(start_date)
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid start date format")
-        if end_date:
-            try:
-                filters.date_range.end_date = datetime.fromisoformat(end_date)
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid end date format")
+    filters = _date_filters(start_date, end_date)
     
     if client_ids:
         filters.client_ids = client_ids
@@ -169,20 +171,7 @@ async def get_finance_report(
     """Get finance report with optional filters."""
     report_service = ReportService(db)
     
-    filters = ReportFilters()
-    if start_date or end_date:
-        from app.schemas.report import DateRangeFilter
-        filters.date_range = DateRangeFilter()
-        if start_date:
-            try:
-                filters.date_range.start_date = datetime.fromisoformat(start_date)
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid start date format")
-        if end_date:
-            try:
-                filters.date_range.end_date = datetime.fromisoformat(end_date)
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid end date format")
+    filters = _date_filters(start_date, end_date)
     
     data = report_service.generate_finance_report(filters)
     
@@ -195,12 +184,14 @@ async def get_finance_report(
 
 @router.get("/inventory", response_model=ResponseModel)
 async def get_inventory_report(
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Get inventory report."""
     report_service = ReportService(db)
-    data = report_service.generate_inventory_report()
+    data = report_service.generate_inventory_report(_date_filters(start_date, end_date))
     
     return ResponseModel(
         success=True,
@@ -219,20 +210,7 @@ async def get_clients_report(
     """Get clients report with optional filters."""
     report_service = ReportService(db)
     
-    filters = ReportFilters()
-    if start_date or end_date:
-        from app.schemas.report import DateRangeFilter
-        filters.date_range = DateRangeFilter()
-        if start_date:
-            try:
-                filters.date_range.start_date = datetime.fromisoformat(start_date)
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid start date format")
-        if end_date:
-            try:
-                filters.date_range.end_date = datetime.fromisoformat(end_date)
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid end date format")
+    filters = _date_filters(start_date, end_date)
     
     data = report_service.generate_clients_report(filters)
     
@@ -253,20 +231,7 @@ async def get_performance_report(
     """Get performance report with optional filters."""
     report_service = ReportService(db)
     
-    filters = ReportFilters()
-    if start_date or end_date:
-        from app.schemas.report import DateRangeFilter
-        filters.date_range = DateRangeFilter()
-        if start_date:
-            try:
-                filters.date_range.start_date = datetime.fromisoformat(start_date)
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid start date format")
-        if end_date:
-            try:
-                filters.date_range.end_date = datetime.fromisoformat(end_date)
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid end date format")
+    filters = _date_filters(start_date, end_date)
     
     data = report_service.generate_performance_report(filters)
     

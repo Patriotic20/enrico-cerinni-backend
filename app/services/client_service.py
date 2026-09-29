@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, func
+from sqlalchemy import or_, func, case
 from typing import List, Optional, Tuple
 from decimal import Decimal
 from app.models.client import Client
@@ -244,3 +244,64 @@ class ClientService:
     def get_clients_with_debt(self) -> List[Client]:
         """Get all clients with outstanding debt."""
         return self.db.query(Client).filter(Client.debt_amount > 0).all()
+
+    def get_insights(self) -> List[dict]:
+        """Per-client purchase metrics for every client, for segmentation.
+
+        One grouped query over sales; the frontend segments and pages it.
+        """
+        # ponytail: returns all clients at once, fine for a few thousand; move
+        # segmentation into SQL with server paging if the base grows past that.
+        counted = Sale.status != "cancelled"
+        unpaid = Sale.status.in_(["debt", "partially_paid"])
+        agg = (
+            self.db.query(
+                Sale.client_id.label("client_id"),
+                func.count(case((counted, Sale.id))).label("orders"),
+                func.coalesce(func.sum(case((counted, Sale.total_amount), else_=0)), 0).label("spent"),
+                func.min(case((counted, Sale.created_at))).label("first_purchase"),
+                func.max(case((counted, Sale.created_at))).label("last_purchase"),
+                func.coalesce(
+                    func.sum(case((unpaid, Sale.total_amount - Sale.paid_amount), else_=0)), 0
+                ).label("sales_debt"),
+                func.min(case((unpaid, Sale.created_at))).label("oldest_debt"),
+            )
+            .filter(Sale.client_id.isnot(None))
+            .group_by(Sale.client_id)
+            .subquery()
+        )
+        rows = (
+            self.db.query(
+                Client,
+                agg.c.orders,
+                agg.c.spent,
+                agg.c.first_purchase,
+                agg.c.last_purchase,
+                agg.c.sales_debt,
+                agg.c.oldest_debt,
+            )
+            .outerjoin(agg, agg.c.client_id == Client.id)
+            .order_by(Client.id)
+            .all()
+        )
+        iso = lambda d: d.isoformat() if d else None
+        return [
+            {
+                "id": c.id,
+                "first_name": c.first_name,
+                "last_name": c.last_name,
+                "phone": c.phone,
+                "telegram_chat_id": c.telegram_chat_id,
+                "address": c.address,
+                "notes": c.notes,
+                "is_active": c.is_active,
+                "created_at": iso(c.created_at),
+                "orders": orders or 0,
+                "spent": float(spent or 0),
+                "debt_amount": float((sales_debt or 0) + (c.manual_debt_adjustment or 0)),
+                "first_purchase_date": iso(first),
+                "last_purchase_date": iso(last),
+                "oldest_debt_date": iso(oldest_debt),
+            }
+            for c, orders, spent, first, last, sales_debt, oldest_debt in rows
+        ]

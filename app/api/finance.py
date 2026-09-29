@@ -5,17 +5,17 @@ from datetime import datetime, date
 from decimal import Decimal
 
 from app.database import get_db
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, require_staff
 from app.schemas.common import ResponseModel
 from app.schemas.expense import ExpenseCreate, ExpenseUpdate, ExpenseResponse
 from app.schemas.employee import EmployeeCreate, EmployeeUpdate, EmployeeResponse
 from app.schemas.supplier import SupplierCreate, SupplierUpdate, SupplierResponse
 from app.schemas.salary_payment import SalaryPaymentCreate, SalaryPaymentUpdate, SalaryPaymentResponse
-from app.models import Expense, Employee, Supplier, SalaryPayment, Transaction
+from app.models import Expense, Employee, Supplier, SalaryPayment, Transaction, Sale
 from app.models.transaction import TransactionType
 from app.services.expense_totals import expense_totals_by_category
 
-router = APIRouter(prefix="/finance", tags=["Finance"])
+router = APIRouter(prefix="/finance", tags=["Finance"], dependencies=[Depends(require_staff)])
 
 # ==================== EXPENSES ====================
 
@@ -280,6 +280,17 @@ async def delete_employee(
     if not employee:
         raise HTTPException(status_code=404, detail="Employee not found")
 
+    # Sales and salary payments reference the employee: deleting would fail on
+    # the FK or erase their KPI history, so such employees are retired instead.
+    has_history = (
+        db.query(Sale.id).filter(Sale.seller_id == employee.id).first()
+        or db.query(SalaryPayment.id).filter(SalaryPayment.employee_id == employee.id).first()
+    )
+    if has_history:
+        employee.is_active = False
+        db.commit()
+        return ResponseModel(success=True, message="Employee deactivated (has sales or salary history)")
+
     db.delete(employee)
     db.commit()
 
@@ -403,7 +414,10 @@ async def get_salary_payments(
         query = query.filter(SalaryPayment.payment_date <= end_date)
 
     total = query.count()
-    salary_payments = query.offset(offset).limit(limit).all()
+    salary_payments = (
+        query.order_by(SalaryPayment.payment_date.desc(), SalaryPayment.id.desc())
+        .offset(offset).limit(limit).all()
+    )
 
     # Add employee name to response
     result_items = []
