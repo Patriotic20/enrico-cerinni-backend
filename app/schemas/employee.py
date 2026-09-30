@@ -21,6 +21,8 @@ class EmployeeCreate(EmployeeBase):
     address: Optional[str] = None
     notes: Optional[str] = None
     is_active: bool = True
+    # Write-only: sets the seller's mobile app PIN (login is phone + PIN).
+    pin: Optional[str] = Field(default=None, pattern=r"^\d{4,6}$")
 
 
 class EmployeeUpdate(BaseModel):
@@ -37,6 +39,8 @@ class EmployeeUpdate(BaseModel):
     is_seller: Optional[bool] = None
     commission_rate: Optional[Decimal] = Field(default=None, ge=0, le=100)
     monthly_target: Optional[Decimal] = Field(default=None, ge=0)
+    # Write-only: sets the seller's mobile app PIN (login is phone + PIN).
+    pin: Optional[str] = Field(default=None, pattern=r"^\d{4,6}$")
 
 
 class EmployeeResponse(EmployeeBase):

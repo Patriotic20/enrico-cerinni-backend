@@ -12,7 +12,7 @@ from app.schemas.product import (
 )
 from app.schemas.product_variant import ProductVariantResponse
 from app.schemas.common import ResponseModel, PaginatedResponse
-from app.api.deps import get_current_active_user, require_staff, is_staff
+from app.api.deps import get_current_active_user, get_any_user, require_staff, is_staff
 from app.models.user import User
 
 router = APIRouter(prefix="/products", tags=["Products"])
@@ -22,7 +22,7 @@ router = APIRouter(prefix="/products", tags=["Products"])
 def scan_barcode(
     barcode: str,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_any_user),
 ):
     product_service = ProductService(db)
     product = product_service.get_product_by_variant_sku(barcode)
@@ -80,7 +80,7 @@ def get_products(
     page: int = Query(1, ge=1, description="Page number"),
     size: int = Query(10, ge=1, le=100, description="Page size"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_any_user),
 ):
     filters = ProductFilter(
         name=name,

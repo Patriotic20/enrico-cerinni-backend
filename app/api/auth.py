@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.services.auth_service import AuthService
-from app.schemas.auth import UserLogin, UserRegister, UserResponse, PasswordChange
+from app.schemas.auth import UserLogin, PinLogin, UserRegister, UserResponse, PasswordChange
 from app.schemas.common import ResponseModel
 from app.utils.auth import (
     get_user_from_refresh_token,
@@ -10,9 +10,10 @@ from app.utils.auth import (
     clear_auth_cookies,
     get_token_from_cookie,
 )
-from app.api.deps import get_current_admin_user, get_current_user
+from app.api.deps import get_current_admin_user, get_current_user, get_any_user
 from app.models.user import User
 from app.utils.rate_limit import SlidingWindow
+from app.utils.helpers import normalize_phone
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -66,6 +67,31 @@ def login(
         )
     except HTTPException as e:
         return ResponseModel(success=False, message=e.detail)
+
+
+@router.post("/pin-login", response_model=ResponseModel)
+def pin_login(data: PinLogin, request: Request, response: Response, db: Session = Depends(get_db)):
+    """Seller mobile app sign-in. A PIN is short, so the per-account lockout is
+    what keeps it from being guessed."""
+    ip = request.client.host if request.client else "unknown"
+    key = "pin:" + normalize_phone(data.phone)
+    if _login_ip.blocked(ip) or _login_fail.blocked(key):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=_TOO_MANY)
+    _login_ip.hit(ip)
+
+    user = AuthService(db).authenticate_seller(data.phone, data.pin)
+    if not user or not user.is_active:
+        _login_fail.hit(key)
+        return ResponseModel(success=False, message="Incorrect phone or PIN")
+    _login_fail.reset(key)
+
+    tokens = AuthService.issue_tokens(user)
+    set_auth_cookies(response, tokens["access_token"], tokens["refresh_token"])
+    return ResponseModel(
+        success=True,
+        data={"access_token": tokens["access_token"], "refresh_token": tokens["refresh_token"]},
+        message="Login successful",
+    )
 
 
 @router.post("/register", response_model=ResponseModel)
@@ -150,7 +176,7 @@ async def refresh_token(
 
 
 @router.get("/validate", response_model=ResponseModel)
-def validate_token(current_user=Depends(get_current_user)):
+def validate_token(current_user=Depends(get_any_user)):
     return ResponseModel(
         success=True,
         data={
@@ -161,6 +187,7 @@ def validate_token(current_user=Depends(get_current_user)):
             "last_name": current_user.last_name,
             "phone": current_user.phone,
             "role": current_user.role.value,
+            "employee_id": current_user.employee_id,
             "created_at": current_user.created_at.isoformat(),
         },
         message="Token is valid",
@@ -190,7 +217,7 @@ def change_password(
 def logout(
     response: Response,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_any_user),
 ):
     auth_service = AuthService(db)
     try:

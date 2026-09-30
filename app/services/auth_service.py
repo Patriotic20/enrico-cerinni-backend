@@ -10,7 +10,8 @@ from app.utils.auth import (
     create_access_token,
     create_refresh_token,
 )
-from app.utils.helpers import validate_email
+from app.utils.helpers import validate_email, normalize_phone
+from app.models.employee import Employee
 from fastapi import HTTPException, status
 
 
@@ -31,6 +32,60 @@ class AuthService:
         if not verify_password(password, user.hashed_password):
             return None
         return user
+
+    def authenticate_seller(self, phone: str, pin: str) -> Optional[User]:
+        """Mobile app login: employee phone + PIN, same timing on a miss."""
+        user = (
+            self.db.query(User)
+            .filter(User.role == UserRole.SELLER, User.phone == normalize_phone(phone))
+            .first()
+        )
+        if not user:
+            verify_password(pin, _DUMMY_HASH)
+            return None
+        if not verify_password(pin, user.hashed_password):
+            return None
+        return user
+
+    def sync_seller_account(self, employee: Employee, pin: Optional[str] = None) -> None:
+        """Keep the employee's mobile login (a SELLER user) in step with them.
+
+        A PIN creates the account or replaces the PIN (signing out the phone);
+        without one, an existing account just follows the phone/name. Caller commits.
+        """
+        user = self.db.query(User).filter(User.employee_id == employee.id).first()
+        if user is None and not pin:
+            return
+        phone = normalize_phone(employee.phone)
+        if len(phone) < 9:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Employee needs a phone number for mobile access",
+            )
+        taken = (
+            self.db.query(User.id)
+            .filter(User.role == UserRole.SELLER, User.phone == phone, User.employee_id != employee.id)
+            .first()
+        )
+        if taken:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Another seller already uses this phone number",
+            )
+        if user is None:
+            user = User(
+                username=f"seller-{employee.id}",
+                role=UserRole.SELLER,
+                employee_id=employee.id,
+                token_version=0,
+            )
+            self.db.add(user)
+        user.phone = phone
+        user.first_name = employee.first_name
+        user.last_name = employee.last_name
+        if pin:
+            user.hashed_password = get_password_hash(pin)
+            user.token_version = (user.token_version or 0) + 1
 
     def create_user(self, user_data: UserRegister) -> User:
         if not validate_email(user_data.email):

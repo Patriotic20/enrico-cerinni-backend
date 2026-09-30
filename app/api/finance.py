@@ -11,7 +11,8 @@ from app.schemas.expense import ExpenseCreate, ExpenseUpdate, ExpenseResponse
 from app.schemas.employee import EmployeeCreate, EmployeeUpdate, EmployeeResponse
 from app.schemas.supplier import SupplierCreate, SupplierUpdate, SupplierResponse
 from app.schemas.salary_payment import SalaryPaymentCreate, SalaryPaymentUpdate, SalaryPaymentResponse
-from app.models import Expense, Employee, Supplier, SalaryPayment, Transaction, Sale
+from app.models import Expense, Employee, Supplier, SalaryPayment, Transaction, Sale, User, Cart
+from app.services.auth_service import AuthService
 from app.models.transaction import TransactionType
 from app.services.expense_totals import expense_totals_by_category
 
@@ -234,8 +235,12 @@ def create_employee(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    employee = Employee(**employee_data.dict())
+    data = employee_data.dict()
+    pin = data.pop("pin", None)
+    employee = Employee(**data)
     db.add(employee)
+    db.flush()
+    AuthService(db).sync_seller_account(employee, pin)
     db.commit()
     db.refresh(employee)
 
@@ -257,8 +262,11 @@ def update_employee(
     if not employee:
         raise HTTPException(status_code=404, detail="Employee not found")
 
-    for field, value in employee_data.dict(exclude_unset=True).items():
+    data = employee_data.dict(exclude_unset=True)
+    pin = data.pop("pin", None)
+    for field, value in data.items():
         setattr(employee, field, value)
+    AuthService(db).sync_seller_account(employee, pin)
 
     db.commit()
     db.refresh(employee)
@@ -285,12 +293,14 @@ def delete_employee(
     has_history = (
         db.query(Sale.id).filter(Sale.seller_id == employee.id).first()
         or db.query(SalaryPayment.id).filter(SalaryPayment.employee_id == employee.id).first()
+        or db.query(Cart.id).filter(Cart.seller_id == employee.id).first()
     )
     if has_history:
         employee.is_active = False
         db.commit()
         return ResponseModel(success=True, message="Employee deactivated (has sales or salary history)")
 
+    db.query(User).filter(User.employee_id == employee.id).delete()
     db.delete(employee)
     db.commit()
 

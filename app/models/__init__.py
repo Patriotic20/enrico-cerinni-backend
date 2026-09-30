@@ -16,6 +16,7 @@ from .salary_payment import SalaryPayment
 from .report import Report, ReportTemplate, ReportExecution
 from .broadcast import BroadcastHistory
 from .app_setting import AppSetting
+from .cart import Cart, CartItem
 
 __all__ = [
     "User",
@@ -39,4 +40,6 @@ __all__ = [
     "ReportExecution",
     "BroadcastHistory",
     "AppSetting",
+    "Cart",
+    "CartItem",
 ]

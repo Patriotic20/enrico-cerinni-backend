@@ -15,7 +15,7 @@ from app.schemas.client import (
 from app.schemas.common import ResponseModel
 from datetime import datetime
 from decimal import Decimal
-from app.api.deps import get_current_active_user, require_staff
+from app.api.deps import get_current_active_user, get_any_user, require_staff
 from app.models.user import User
 
 router = APIRouter(prefix="/clients", tags=["Clients"])
@@ -42,7 +42,7 @@ def get_clients(
     page: int = Query(1, ge=1, description="Page number"),
     size: int = Query(10, ge=1, le=100, description="Page size"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_any_user),  # sellers pick the client for a cart
 ):
     """Get all clients with filtering and pagination."""
     filters = ClientFilter(
@@ -141,7 +141,7 @@ def get_client(
 def create_client(
     client_data: ClientCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(get_any_user),  # sellers fill a client card on the floor
 ):
     """Create a new client."""
     client_service = ClientService(db)

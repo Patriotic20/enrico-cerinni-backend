@@ -17,6 +17,8 @@ from app.utils.helpers import (
 )
 from fastapi import HTTPException, status
 from app.models.user import User
+from app.models.cart import CartStatus
+from app.services.cart_service import lock_pending_cart, lock_variants, release_stock
 
 # Everything _sale_response touches, loaded up front instead of lazily per row.
 SALE_DETAILS = (
@@ -52,7 +54,10 @@ class SaleService:
                     status_code=status.HTTP_400_BAD_REQUEST, detail="Client not found"
                 )
 
-        seller = self.db.query(Employee).filter(Employee.id == sale_data.seller_id).first()
+        cart = lock_pending_cart(self.db, sale_data.cart_id) if sale_data.cart_id else None
+        seller_id = cart.seller_id if cart else sale_data.seller_id
+
+        seller = self.db.query(Employee).filter(Employee.id == seller_id).first()
         if not seller or not seller.is_active or not seller.is_seller:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="Seller not found"
@@ -60,14 +65,13 @@ class SaleService:
 
         # One locked read for every variant: stops two tills selling the last unit.
         variant_ids = {i.product_variant_id for i in sale_data.items}
-        variants = {
-            v.id: v
-            for v in self.db.query(ProductVariant)
-            .filter(ProductVariant.id.in_(variant_ids))
-            .order_by(ProductVariant.id)
-            .with_for_update()
-            .all()
-        }
+        if cart:
+            variant_ids |= {i.product_variant_id for i in cart.items}
+        variants = lock_variants(self.db, variant_ids)
+        if cart:
+            # The cart's reservation goes back to stock and the sale takes what it
+            # really sells from there, so the cashier may still edit the items.
+            release_stock(cart, variants)
 
         total_amount = Decimal("0")
         sale_items = []
@@ -135,6 +139,10 @@ class SaleService:
 
         self.db.add(db_sale)
         self.db.flush()  # Get the sale ID
+
+        if cart:
+            cart.status = CartStatus.COMPLETED.value
+            cart.sale_id = db_sale.id
 
         # Create sale items and update stock
         for item_info in sale_items:

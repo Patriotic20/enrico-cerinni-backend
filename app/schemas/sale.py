@@ -43,6 +43,9 @@ class SaleCreate(SaleBase):
     items: List[SaleItemCreate] = Field(min_length=1)
     # Required for new sales: per-seller KPI is computed from it.
     seller_id: int
+    # Paying a seller's cart from the mobile app: its reserved stock is used
+    # and the sale is credited to the cart's seller.
+    cart_id: Optional[int] = None
 
 
 class SaleUpdate(BaseModel):

@@ -8,6 +8,12 @@ class UserLogin(BaseModel):
     password: str
 
 
+class PinLogin(BaseModel):
+    """Seller mobile login."""
+    phone: str = Field(max_length=32)
+    pin: str = Field(pattern=r"^\d{4,6}$")
+
+
 class UserRegister(BaseModel):
     """New-user payload. `role` is intentionally not accepted from the request:
     it was previously honoured verbatim, so any caller could create themselves an

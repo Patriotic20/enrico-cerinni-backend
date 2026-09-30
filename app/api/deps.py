@@ -5,12 +5,13 @@ from typing import Optional
 from app.database import get_db
 from app.utils.auth import get_current_user_payload, get_token_from_cookie
 from app.models.user import User, UserRole
+from app.models.employee import Employee
 from app.services.auth_service import AuthService
 
 security = HTTPBearer(auto_error=False)
 
 
-def get_current_user(
+def get_any_user(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: Session = Depends(get_db),
@@ -54,6 +55,29 @@ def get_current_user(
         )
 
     return user
+
+
+def get_current_user(user: User = Depends(get_any_user)) -> User:
+    """Signed-in back-office user. Seller (mobile PIN) accounts are refused here,
+    so every endpoint is closed to them unless it depends on get_any_user."""
+    if user.role == UserRole.SELLER:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Not enough permissions"
+        )
+    return user
+
+
+def get_current_seller(
+    user: User = Depends(get_any_user), db: Session = Depends(get_db)
+) -> Employee:
+    """The employee behind a seller account; gone the moment the employee is
+    deactivated or stops being a seller."""
+    employee = db.get(Employee, user.employee_id) if user.role == UserRole.SELLER else None
+    if not employee or not employee.is_active or not employee.is_seller:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Seller access disabled"
+        )
+    return employee
 
 
 def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:

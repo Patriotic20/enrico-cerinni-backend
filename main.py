@@ -24,6 +24,8 @@ from app.api import (
     marketing_router,
     reports_router,
     employees_router,
+    carts_router,
+    seller_router,
 )
 
 
@@ -141,6 +143,8 @@ app.include_router(product_variants_router)
 app.include_router(marketing_router)
 app.include_router(reports_router)
 app.include_router(employees_router)
+app.include_router(carts_router)
+app.include_router(seller_router)
 
 
 

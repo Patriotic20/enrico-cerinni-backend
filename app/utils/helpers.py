@@ -51,3 +51,14 @@ def calculate_pagination_info(total: int, page: int, size: int) -> dict:
     """Calculate pagination information."""
     pages = (total + size - 1) // size
     return {"page": page, "size": size, "total": total, "pages": pages}
+
+
+def normalize_phone(phone: Optional[str]) -> str:
+    """Last 9 digits: "+998 90 123-45-67" and "901234567" are the same number.
+
+    ponytail: assumes Uzbek numbers (9-digit national part); widen if the shop
+    ever has staff with foreign numbers.
+    """
+    import re
+
+    return re.sub(r"\D", "", phone or "")[-9:]

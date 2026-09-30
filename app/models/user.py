@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Enum
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Enum, ForeignKey
 from sqlalchemy.sql import func
 from app.database import Base
 import enum
@@ -8,6 +8,8 @@ class UserRole(str, enum.Enum):
     ADMIN = "admin"
     MANAGER = "manager"
     USER = "user"
+    # Mobile app only: signs in with phone + PIN, builds carts for the cashier.
+    SELLER = "seller"
 
 
 class User(Base):
@@ -24,6 +26,9 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     role = Column(Enum(UserRole), default=UserRole.MANAGER, nullable=False)
     
+    # Set only for SELLER accounts: the employee whose KPI their carts count towards.
+    employee_id = Column(Integer, ForeignKey("employees.id"), unique=True, nullable=True)
+
     is_active = Column(Boolean, default=True, nullable=False)
     # Bumped on logout / password change; refresh tokens carrying an older value are rejected.
     token_version = Column(Integer, default=0, server_default="0", nullable=False)
