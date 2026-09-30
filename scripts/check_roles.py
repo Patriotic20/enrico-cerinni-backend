@@ -35,6 +35,8 @@ CASES = [
     ("PATCH", "/sales/999999/cancel", False),
     ("GET", "/employees/kpi", False),
     ("GET", "/employees/1/kpi", False),
+    ("GET", "/labels/template", False),
+    ("PUT", "/labels/template", False),
     ("GET", "/employees/sellers", True),
     ("GET", "/products/", True),
     ("GET", "/clients/", True),
