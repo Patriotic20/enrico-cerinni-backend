@@ -1,5 +1,5 @@
-from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_, desc, asc
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, and_, or_, desc, asc, select
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -10,6 +10,8 @@ from app.models.client import Client
 from app.models.product import Product
 from app.models.category import Category
 from app.models.product_variant import ProductVariant
+from app.models.size import Size
+from app.models.color import Color
 from app.models.expense import Expense
 from app.models.transaction import Transaction
 from app.models.report import Report, ReportTemplate, ReportExecution, ReportType
@@ -80,63 +82,71 @@ class ReportService:
             if filters.max_amount:
                 base_query = base_query.filter(Sale.total_amount <= filters.max_amount)
 
-        # Calculate metrics
-        sales = base_query.all()
-        total_revenue = sum(sale.total_amount for sale in sales)
-        total_sales = len(sales)
+        # Calculate metrics in SQL; loading every sale of a long period was the
+        # slow part of this report.
+        total_revenue, total_sales, unique_clients, outstanding = base_query.with_entities(
+            func.coalesce(func.sum(Sale.total_amount), 0),
+            func.count(Sale.id),
+            func.count(func.distinct(Sale.client_id)),
+            func.coalesce(
+                func.sum(func.greatest(Sale.total_amount - Sale.paid_amount, 0)), 0
+            ),
+        ).one()
+        total_revenue = Decimal(total_revenue)
         avg_order_value = total_revenue / total_sales if total_sales > 0 else Decimal('0')
-        
-        sale_ids = [sale.id for sale in sales]
+
         items_sold = (
-            self.db.query(func.coalesce(func.sum(SaleItem.quantity), 0))
-            .filter(SaleItem.sale_id.in_(sale_ids))
+            base_query.join(SaleItem, SaleItem.sale_id == Sale.id)
+            .with_entities(func.coalesce(func.sum(SaleItem.quantity), 0))
             .scalar()
-        ) if sale_ids else 0
+        )
 
         metrics = SalesMetric(
             total_revenue=total_revenue,
             total_sales=total_sales,
             avg_order_value=avg_order_value,
             items_sold=int(items_sold),
-            unique_clients=len({s.client_id for s in sales if s.client_id}),
-            outstanding=sum(
-                (max(s.total_amount - s.paid_amount, Decimal('0')) for s in sales),
-                Decimal('0'),
-            ),
+            unique_clients=unique_clients,
+            outstanding=Decimal(outstanding),
         )
 
-        # Get top products
+        # Top products, names joined in the same query (was 3+ queries per row).
+        total_quantity = func.sum(SaleItem.quantity).label('total_quantity')
         top_products_query = (
             self.db.query(
-                SaleItem.product_variant_id,
-                func.sum(SaleItem.quantity).label('total_quantity'),
-                func.sum(SaleItem.total_price).label('total_revenue')
+                Product.id,
+                Product.name,
+                Size.name.label('size_name'),
+                Color.name.label('color_name'),
+                total_quantity,
+                func.sum(SaleItem.total_price).label('total_revenue'),
             )
-            .join(Sale)
+            .select_from(SaleItem)
+            .join(Sale, SaleItem.sale_id == Sale.id)
+            .join(ProductVariant, SaleItem.product_variant_id == ProductVariant.id)
+            .join(Product, ProductVariant.product_id == Product.id)
+            .outerjoin(Size, ProductVariant.size_id == Size.id)
+            .outerjoin(Color, ProductVariant.color_id == Color.id)
             .filter(
                 Sale.created_at >= start_date,
                 Sale.created_at <= end_date,
                 Sale.status != SaleStatus.CANCELLED
             )
-            .group_by(SaleItem.product_variant_id)
+            .group_by(SaleItem.product_variant_id, Product.id, Product.name, Size.name, Color.name)
             .order_by(desc('total_quantity'))
             .limit(10)
         )
 
-        top_products = []
-        for item in top_products_query.all():
-            variant = self.db.query(ProductVariant).filter(
-                ProductVariant.id == item.product_variant_id
-            ).first()
-            if variant:
-                product = self.db.query(Product).filter(Product.id == variant.product_id).first()
-                top_products.append(TopProduct(
-                    product_id=product.id if product else 0,
-                    product_name=product.name if product else "Unknown",
-                    variant_name=f"{variant.size.name if variant.size else ''} {variant.color.name if variant.color else ''}".strip(),
-                    sales_count=int(item.total_quantity),
-                    total_revenue=item.total_revenue
-                ))
+        top_products = [
+            TopProduct(
+                product_id=row.id,
+                product_name=row.name,
+                variant_name=f"{row.size_name or ''} {row.color_name or ''}".strip(),
+                sales_count=int(row.total_quantity),
+                total_revenue=row.total_revenue,
+            )
+            for row in top_products_query.all()
+        ]
 
         # Get sales trend (daily data)
         trend_query = (
@@ -390,9 +400,15 @@ class ReportService:
                 movement_velocity=round(sold / days, 2),
             )
 
+        with_names = (
+            joinedload(ProductVariant.product),
+            joinedload(ProductVariant.size),
+            joinedload(ProductVariant.color),
+        )
         low_stock_products = [
             movement(v) for v in
             self.db.query(ProductVariant)
+            .options(*with_names)
             .filter(or_(low_filter, ProductVariant.stock_quantity <= 0))
             .order_by(asc(ProductVariant.stock_quantity))
             .limit(50)
@@ -402,7 +418,8 @@ class ReportService:
         top_ids = sorted(sold_by_variant, key=lambda k: sold_by_variant[k], reverse=True)[:10]
         top_variants = {
             v.id: v for v in
-            self.db.query(ProductVariant).filter(ProductVariant.id.in_(top_ids)).all()
+            self.db.query(ProductVariant).options(*with_names)
+            .filter(ProductVariant.id.in_(top_ids)).all()
         } if top_ids else {}
         top_moving_products = [movement(top_variants[i]) for i in top_ids if i in top_variants]
 
@@ -535,26 +552,28 @@ class ReportService:
                 ).count(),
             })
 
-        # Mutually exclusive segments for the selected period.
-        def buyer_ids(*conditions):
-            return {
-                row[0] for row in self.db.query(Sale.client_id).filter(
-                    Sale.client_id.isnot(None), Sale.status != SaleStatus.CANCELLED, *conditions
-                ).distinct().all()
-            }
+        # Mutually exclusive segments for the selected period, counted in SQL.
+        def bought(*conditions):
+            return (
+                select(Sale.id)
+                .where(Sale.client_id == Client.id, Sale.status != SaleStatus.CANCELLED, *conditions)
+                .exists()
+            )
 
-        new_ids = {
-            row[0] for row in self.db.query(Client.id).filter(
-                Client.created_at >= start_date, Client.created_at <= end_date
-            ).all()
-        }
-        bought_in_period = buyer_ids(Sale.created_at >= start_date, Sale.created_at <= end_date)
-        bought_ever = buyer_ids()
+        is_new = and_(Client.created_at >= start_date, Client.created_at <= end_date)
+        in_period = bought(Sale.created_at >= start_date, Sale.created_at <= end_date)
+        ever = bought()
+        new_n, active_n, inactive_n, never_n = self.db.query(
+            func.count().filter(is_new),
+            func.count().filter(~is_new, in_period),
+            func.count().filter(~is_new, ~in_period, ever),
+            func.count().filter(~is_new, ~ever),
+        ).select_from(Client).one()
         clients_by_segment = {
-            "new": len(new_ids),
-            "active": len(bought_in_period - new_ids),
-            "inactive": len(bought_ever - bought_in_period - new_ids),
-            "never_bought": max(total_clients - len(bought_ever | new_ids), 0),
+            "new": new_n,
+            "active": active_n,
+            "inactive": inactive_n,
+            "never_bought": never_n,
         }
 
         return ClientsReportData(
@@ -660,30 +679,32 @@ class ReportService:
         month_anchor = datetime.now().replace(
             day=1, hour=0, minute=0, second=0, microsecond=0
         )
-        for i in range(5, -1, -1):
-            month_start = (month_anchor - timedelta(days=i * 30)).replace(day=1)
-            month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(seconds=1)
-            before_start = (month_start - timedelta(days=1)).replace(day=1)
-            before_end = month_start - timedelta(seconds=1)
+        month_starts = [
+            (month_anchor - timedelta(days=i * 30)).replace(day=1) for i in range(5, -1, -1)
+        ]
+        first_before = (month_starts[0] - timedelta(days=1)).replace(day=1)
+        last_end = (month_starts[-1] + timedelta(days=32)).replace(day=1)
+        # One grouped query for all seven months instead of four per month.
+        month = func.date_trunc("month", Sale.created_at)
+        by_month = {
+            m.replace(tzinfo=None): (revenue, count)
+            for m, revenue, count in period_sales(first_before, last_end)
+            .filter(Sale.created_at < last_end)
+            .with_entities(month, func.coalesce(func.sum(Sale.total_amount), 0), func.count(Sale.id))
+            .group_by(month)
+            .all()
+        }
 
-            revenue = period_sales(month_start, month_end).with_entities(
-                func.coalesce(func.sum(Sale.total_amount), 0)
-            ).scalar() or Decimal("0")
-            revenue_before = period_sales(before_start, before_end).with_entities(
-                func.coalesce(func.sum(Sale.total_amount), 0)
-            ).scalar() or Decimal("0")
+        for month_start in month_starts:
+            before_start = (month_start - timedelta(days=1)).replace(day=1)
+            revenue, count = by_month.get(month_start, (Decimal("0"), 0))
+            revenue_before, count_before = by_month.get(before_start, (Decimal("0"), 0))
 
             monthly_performance.append({
                 "month": month_start.strftime("%m.%Y"),
                 "revenue": float(revenue),
                 "revenue_growth": round(growth(revenue, revenue_before), 2),
-                "sales_growth": round(
-                    growth(
-                        period_sales(month_start, month_end).count(),
-                        period_sales(before_start, before_end).count(),
-                    ),
-                    2,
-                ),
+                "sales_growth": round(growth(count, count_before), 2),
             })
 
         # KPIs are intentionally empty: targets are a business input and no

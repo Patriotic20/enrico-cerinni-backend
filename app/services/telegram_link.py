@@ -19,7 +19,7 @@ from typing import List, Optional
 import httpx
 from sqlalchemy.orm import Session
 
-from app.config import settings
+from app.config import PLACEHOLDER_SECRETS, settings
 from app.models.client import Client
 
 API = "https://api.telegram.org/bot{token}/{method}"
@@ -27,7 +27,11 @@ START_RE = re.compile(r"^/start\s+c(\d+)_([0-9a-f]{12})$")
 
 
 def _sign(client_id: int) -> str:
-    key = settings.security.secret_key.encode()
+    secret = settings.security.secret_key
+    # A public key would let anyone forge every client's link code.
+    if not secret or secret in PLACEHOLDER_SECRETS:
+        raise RuntimeError("SECRET_KEY serverda sozlanmagan — Telegram havolasini yaratib bo'lmaydi")
+    key = secret.encode()
     return hmac.new(key, f"tg-link:{client_id}".encode(), hashlib.sha256).hexdigest()[:12]
 
 
@@ -59,6 +63,7 @@ async def sync(db: Session) -> List[str]:
         return []
 
     linked: List[str] = []
+    replies: List[tuple] = []  # sent after commit, so no DB connection waits on HTTP
     for upd in updates:
         msg = upd.get("message") or {}
         chat_id: Optional[int] = (msg.get("chat") or {}).get("id")
@@ -67,16 +72,23 @@ async def sync(db: Session) -> List[str]:
             continue
         if not m or not hmac.compare_digest(m.group(2), _sign(int(m.group(1)))):
             if (msg.get("text") or "").startswith("/start"):
-                await _reply(chat_id, "Botga ulanish uchun do'kondan olingan havoladan foydalaning.")
+                replies.append((chat_id, "Botga ulanish uchun do'kondan olingan havoladan foydalaning."))
             continue
         client = db.get(Client, int(m.group(1)))
         if not client:
             continue
+        if client.telegram_chat_id and client.telegram_chat_id != str(chat_id):
+            # Already linked to another chat: a forwarded link must not take it over.
+            replies.append((chat_id, "Bu mijoz allaqachon boshqa Telegram hisobiga ulangan."))
+            continue
         if client.telegram_chat_id != str(chat_id):
             client.telegram_chat_id = str(chat_id)
             linked.append(f"{client.first_name} {client.last_name}")
-        await _reply(chat_id, f"{client.first_name}, siz do'kon xabarlariga muvaffaqiyatli ulandingiz ✅")
+        replies.append((chat_id, f"{client.first_name}, siz do'kon xabarlariga muvaffaqiyatli ulandingiz ✅"))
     db.commit()
+
+    for chat_id, text in replies:
+        await _reply(chat_id, text)
 
     # Confirm the processed updates so Telegram does not return them again.
     await _call("getUpdates", offset=updates[-1]["update_id"] + 1, limit=1, timeout=0)

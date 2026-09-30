@@ -20,16 +20,13 @@ def get_current_user(
 
     # Try header-based auth first (standard for APIs and production)
     if credentials:
-        print(f"Found Authorization header credentials: {credentials.credentials[:20]}...")
         token = credentials.credentials
     
     # Fallback to cookie-based auth (useful for development and browser requests)
     if not token:
-        print("No Authorization header found, trying cookie-based auth...")
         token = get_token_from_cookie(request, "access_token")
 
     if not token:
-        print("No valid token found in either Authorization header or cookies")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="No authentication token found. Please provide a valid Bearer token in Authorization header or access_token cookie.",
@@ -39,7 +36,6 @@ def get_current_user(
     payload = get_current_user_payload(token)
 
     if not payload:
-        print(f"Invalid or expired token: {token[:20]}...")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired authentication token",
@@ -85,6 +81,11 @@ def require_roles(*roles: UserRole):
 # Admins and managers; cashiers (UserRole.USER) only sell, manage clients and
 # collect debts.
 require_staff = require_roles(UserRole.ADMIN, UserRole.MANAGER)
+
+
+def is_staff(user: User) -> bool:
+    """Cashiers must not see purchase prices (margins)."""
+    return user.role in (UserRole.ADMIN, UserRole.MANAGER)
 
 
 def get_current_admin_user(current_user: User = Depends(get_current_user)) -> User:

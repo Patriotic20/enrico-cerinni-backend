@@ -13,7 +13,7 @@ router = APIRouter(prefix="/settings", tags=["Settings"])
 
 # Category endpoints
 @router.get("/categories", response_model=ResponseModel)
-async def get_categories(
+def get_categories(
     db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)
 ):
     """Get all categories."""
@@ -41,7 +41,7 @@ async def get_categories(
 
 
 @router.post("/categories", response_model=ResponseModel, dependencies=[Depends(require_staff)])
-async def create_category(
+def create_category(
     category_data: CategoryCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -77,7 +77,7 @@ async def create_category(
 
 
 @router.put("/categories/{category_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
-async def update_category(
+def update_category(
     category_id: int,
     category_data: CategoryUpdate,
     db: Session = Depends(get_db),
@@ -120,7 +120,7 @@ async def update_category(
 
 
 @router.delete("/categories/{category_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
-async def delete_category(
+def delete_category(
     category_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),

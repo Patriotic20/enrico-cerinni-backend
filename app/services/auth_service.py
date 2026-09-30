@@ -4,6 +4,7 @@ from typing import Optional
 from app.models.user import User, UserRole
 from app.schemas.auth import UserLogin, UserRegister, UserResponse
 from app.utils.auth import (
+    MAX_PASSWORD_BYTES,
     verify_password,
     get_password_hash,
     create_access_token,
@@ -13,13 +14,21 @@ from app.utils.helpers import validate_email
 from fastapi import HTTPException, status
 
 
+# Compared against when the email is unknown, so a miss costs the same bcrypt
+# time as a hit and response timing can't reveal which emails exist.
+_DUMMY_HASH = get_password_hash("timing-equaliser")
+
+
 class AuthService:
     def __init__(self, db: Session):
         self.db = db
 
     def authenticate_user(self, email: str, password: str) -> Optional[User]:
         user = self.db.query(User).filter(User.email == email).first()
-        if not user or not verify_password(password, user.hashed_password):
+        if not user:
+            verify_password(password, _DUMMY_HASH)
+            return None
+        if not verify_password(password, user.hashed_password):
             return None
         return user
 
@@ -43,6 +52,7 @@ class AuthService:
                 detail="User with this email or username already exists",
             )
 
+        self._check_password_length(user_data.password)
         hashed_password = get_password_hash(user_data.password)
         db_user = User(
             email=user_data.email,
@@ -80,9 +90,13 @@ class AuthService:
                 detail="User account is disabled",
             )
 
+        return self.issue_tokens(user)
+
+    @staticmethod
+    def issue_tokens(user: User) -> dict:
         token_data = {"sub": str(user.id), "email": user.email, "role": user.role.value}
         access_token = create_access_token(data=token_data)
-        refresh_token = create_refresh_token(data=token_data)
+        refresh_token = create_refresh_token(data={**token_data, "ver": user.token_version})
 
         return {
             "access_token": access_token,
@@ -119,6 +133,27 @@ class AuthService:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
             )
-        # For cookie-based auth, we don't deactivate the user
-        # Just return the user - cookies will be cleared by the endpoint
+        # Invalidate every refresh token issued so far.
+        user.token_version += 1
+        self.db.commit()
         return user
+
+    @staticmethod
+    def _check_password_length(password: str) -> None:
+        if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Password must be at most {MAX_PASSWORD_BYTES} bytes",
+            )
+
+    def change_password(self, user: User, current_password: str, new_password: str) -> dict:
+        if not verify_password(current_password, user.hashed_password):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Current password is incorrect",
+            )
+        self._check_password_length(new_password)
+        user.hashed_password = get_password_hash(new_password)
+        user.token_version += 1
+        self.db.commit()
+        return self.issue_tokens(user)

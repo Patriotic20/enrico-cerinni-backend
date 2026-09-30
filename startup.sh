@@ -26,7 +26,7 @@ echo "✅ DATABASE_URL is set." >&2
 # ---------------------------------------------------------------------------
 echo "Step 2: Checking database connection..." >&2
 
-uv run python - <<'PYEOF'
+python - <<'PYEOF'
 import os
 import sys
 import time
@@ -80,7 +80,7 @@ PYEOF
 # ---------------------------------------------------------------------------
 echo "Step 3: Running database migrations..." >&2
 
-if uv run alembic upgrade head; then
+if alembic upgrade head; then
     echo "✅ Migrations completed successfully!" >&2
 else
     echo "❌ FATAL: Alembic migrations failed. Aborting startup to prevent schema mismatch." >&2
@@ -92,9 +92,10 @@ fi
 # ---------------------------------------------------------------------------
 echo "Step 4: Starting FastAPI server on port $APP_PORT..." >&2
 
-exec uv run uvicorn main:app \
+exec uvicorn main:app \
     --host 0.0.0.0 \
     --port "$APP_PORT" \
     --proxy-headers \
     --forwarded-allow-ips='*' \
+    --workers "${WEB_CONCURRENCY:-2}" \
     --log-level info

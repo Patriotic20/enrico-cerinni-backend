@@ -2,28 +2,45 @@ from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.services.auth_service import AuthService
-from app.schemas.auth import UserLogin, UserRegister, UserResponse
+from app.schemas.auth import UserLogin, UserRegister, UserResponse, PasswordChange
 from app.schemas.common import ResponseModel
 from app.utils.auth import (
     get_user_from_refresh_token,
-    create_access_token,
-    create_refresh_token,
     set_auth_cookies,
     clear_auth_cookies,
     get_token_from_cookie,
 )
 from app.api.deps import get_current_admin_user, get_current_user
+from app.models.user import User
+from app.utils.rate_limit import SlidingWindow
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
+# Brute-force guard: attempts per client IP, and failures per account.
+_login_ip = SlidingWindow(limit=20, seconds=60)
+_login_fail = SlidingWindow(limit=5, seconds=15 * 60)
+_TOO_MANY = "Too many login attempts. Try again later."
 
+
+# Plain `def`: bcrypt and the DB calls block, so FastAPI must run this in its threadpool.
 @router.post("/login", response_model=ResponseModel)
-async def login(
-    user_data: UserLogin, response: Response, db: Session = Depends(get_db)
+def login(
+    user_data: UserLogin, request: Request, response: Response, db: Session = Depends(get_db)
 ):
+    ip = request.client.host if request.client else "unknown"
+    email_key = user_data.email.strip().lower()
+    if _login_ip.blocked(ip) or _login_fail.blocked(email_key):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=_TOO_MANY)
+    _login_ip.hit(ip)
+
     auth_service = AuthService(db)
     try:
-        tokens = auth_service.login_user(user_data)
+        try:
+            tokens = auth_service.login_user(user_data)
+        except HTTPException:
+            _login_fail.hit(email_key)
+            raise
+        _login_fail.reset(email_key)
 
         # Set authentication cookies (with environment-appropriate security settings)
         set_auth_cookies(response, tokens["access_token"], tokens["refresh_token"])
@@ -52,7 +69,7 @@ async def login(
 
 
 @router.post("/register", response_model=ResponseModel)
-async def register(
+def register(
     user_data: UserRegister,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_admin_user),
@@ -109,14 +126,15 @@ async def refresh_token(
     if not payload:
         return ResponseModel(success=False, message="Invalid refresh token")
 
-    token_data = {
-        "sub": payload.get("sub"),
-        "email": payload.get("email"),
-        "role": payload.get("role"),
-    }
+    # Re-check the account: deleted/disabled users and tokens revoked by
+    # logout or password change must not mint new tokens.
+    user = db.get(User, int(payload.get("sub")))
+    if not user or not user.is_active or payload.get("ver") != user.token_version:
+        return ResponseModel(success=False, message="Invalid refresh token")
 
-    access_token = create_access_token(data=token_data)
-    new_refresh_token = create_refresh_token(data=token_data)
+    tokens = AuthService.issue_tokens(user)
+    access_token = tokens["access_token"]
+    new_refresh_token = tokens["refresh_token"]
 
     # Set new cookies (for cookie-based clients)
     set_auth_cookies(response, access_token, new_refresh_token)
@@ -132,7 +150,7 @@ async def refresh_token(
 
 
 @router.get("/validate", response_model=ResponseModel)
-async def validate_token(current_user=Depends(get_current_user)):
+def validate_token(current_user=Depends(get_current_user)):
     return ResponseModel(
         success=True,
         data={
@@ -149,8 +167,27 @@ async def validate_token(current_user=Depends(get_current_user)):
     )
 
 
+@router.post("/change-password", response_model=ResponseModel)
+def change_password(
+    data: PasswordChange,
+    response: Response,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Change own password. Revokes all other sessions and returns fresh tokens."""
+    tokens = AuthService(db).change_password(
+        current_user, data.current_password, data.new_password
+    )
+    set_auth_cookies(response, tokens["access_token"], tokens["refresh_token"])
+    return ResponseModel(
+        success=True,
+        data={"access_token": tokens["access_token"], "refresh_token": tokens["refresh_token"]},
+        message="Password changed",
+    )
+
+
 @router.post("/logout", response_model=ResponseModel)
-async def logout(
+def logout(
     response: Response,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),

@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
@@ -7,6 +8,8 @@ from app.schemas.color import ColorCreate, ColorUpdate, ColorResponse
 from app.api.deps import get_current_user, require_staff
 from app.models.user import User
 from app.schemas.common import ResponseModel
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/colors", tags=["colors"])
 
@@ -36,7 +39,8 @@ def create_color(
             ),
         )
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to create color: {str(e)}")
+        logger.exception("Failed to create color")
+        return ResponseModel(success=False, message="Failed to create color")
 
 
 @router.get("", response_model=ResponseModel)
@@ -65,7 +69,8 @@ def get_colors(
             ],
         )
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to fetch colors: {str(e)}")
+        logger.exception("Failed to fetch colors")
+        return ResponseModel(success=False, message="Failed to fetch colors")
 
 
 @router.get("/{color_id}", response_model=ResponseModel)
@@ -93,7 +98,8 @@ def get_color(
             ),
         )
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to fetch color: {str(e)}")
+        logger.exception("Failed to fetch color")
+        return ResponseModel(success=False, message="Failed to fetch color")
 
 
 @router.put("/{color_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
@@ -127,7 +133,8 @@ def update_color(
             ),
         )
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to update color: {str(e)}")
+        logger.exception("Failed to update color")
+        return ResponseModel(success=False, message="Failed to update color")
 
 
 @router.delete("/{color_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
@@ -146,4 +153,5 @@ def delete_color(
         db.commit()
         return ResponseModel(success=True, message="Color deleted successfully")
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to delete color: {str(e)}")
+        logger.exception("Failed to delete color")
+        return ResponseModel(success=False, message="Failed to delete color")

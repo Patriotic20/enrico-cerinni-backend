@@ -94,6 +94,17 @@ async def _run_broadcast(
     return _to_response(total, results)
 
 
+def _image_mime(data: bytes):
+    """Type from magic bytes; the client-sent content type is not trusted."""
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
 @router.post("/broadcast", response_model=ResponseModel)
 async def broadcast_message(
     payload: MarketingBroadcastRequest,
@@ -146,14 +157,14 @@ async def broadcast_telegram(
 
     image_payload = None
     if image is not None and image.filename:
-        content = await image.read()
+        # Read at most one byte past the limit instead of the whole upload.
+        content = await image.read(MAX_IMAGE_BYTES + 1)
         if len(content) > MAX_IMAGE_BYTES:
             raise HTTPException(status_code=413, detail="Image exceeds the 10MB limit")
-        image_payload = (
-            image.filename,
-            content,
-            image.content_type or "application/octet-stream",
-        )
+        mime = _image_mime(content)
+        if not mime:
+            raise HTTPException(status_code=400, detail="Only JPEG, PNG or WEBP images are allowed")
+        image_payload = (image.filename, content, mime)
 
     response = await _run_broadcast(
         service, message, ["telegram"], target_ids, current_user.id, image_payload
@@ -164,7 +175,7 @@ async def broadcast_telegram(
 
 
 @router.get("/stats", response_model=ResponseModel)
-async def get_marketing_stats(
+def get_marketing_stats(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -178,7 +189,7 @@ async def get_marketing_stats(
 
 
 @router.get("/history", response_model=ResponseModel)
-async def get_broadcast_history(
+def get_broadcast_history(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     channel: Optional[str] = Query(None, description="Filter by channel: sms or telegram"),
@@ -195,7 +206,7 @@ async def get_broadcast_history(
 
 
 @router.get("/clients", response_model=ResponseModel)
-async def get_marketing_clients(
+def get_marketing_clients(
     search: Optional[str] = Query(None, max_length=100, description="Filter by name or phone"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -304,7 +315,7 @@ async def test_telegram_connection(
 
 
 @router.get("/settings", response_model=ResponseModel)
-async def get_integration_settings(
+def get_integration_settings(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin_user),
 ):
@@ -317,7 +328,7 @@ async def get_integration_settings(
 
 
 @router.put("/settings", response_model=ResponseModel)
-async def update_integration_settings(
+def update_integration_settings(
     payload: IntegrationSettingsUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_admin_user),

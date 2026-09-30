@@ -7,7 +7,7 @@ from app.database import Base
 class Employee(Base):
     __tablename__ = "employees"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
 
     first_name = Column(String, nullable=False)
     last_name = Column(String, nullable=False)

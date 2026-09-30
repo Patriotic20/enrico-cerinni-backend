@@ -167,7 +167,15 @@ def create_initial_admin():
         if not admin:
             admin = db.query(User).filter(User.username == settings.admin_username).first()
 
-        if not admin:
+        # The shipped default is public; never create a production admin with it.
+        weak = settings.admin_password == "admin123" and settings.server.is_production
+        if not admin and weak:
+            print(
+                "❌ ADMIN_PASSWORD is the public default 'admin123' — refusing to create "
+                "the admin user in production. Set ADMIN_PASSWORD and restart.",
+                flush=True,
+            )
+        elif not admin:
             print(f"🚀 Creating initial admin user with email '{settings.admin_email}'...")
             admin_user = User(
                 email=settings.admin_email,
@@ -181,7 +189,7 @@ def create_initial_admin():
             db.add(admin_user)
             db.commit()
             print("✅ Initial admin user successfully created!")
-        elif settings.admin_force_reset:
+        elif settings.admin_force_reset and not weak:
             # Escape hatch for a lost password: enable ADMIN_FORCE_RESET for one
             # boot, then turn it off again.
             print(f"ℹ️ ADMIN_FORCE_RESET is on — resetting '{admin.username}' credentials...")

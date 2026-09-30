@@ -1,15 +1,22 @@
 from datetime import datetime, timedelta
 from typing import Optional, Union
 import bcrypt
-from jose import JWTError, jwt
+import jwt
 from fastapi import Response
 from app.config import settings
 from app.models.user import User, UserRole
 
 
+# bcrypt only looks at the first 72 bytes and bcrypt>=5 raises on longer input.
+MAX_PASSWORD_BYTES = 72
+
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash."""
-    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+    pw = plain_password.encode("utf-8")
+    if len(pw) > MAX_PASSWORD_BYTES:
+        return False
+    return bcrypt.checkpw(pw, hashed_password.encode("utf-8"))
 
 
 def get_password_hash(password: str) -> str:
@@ -50,7 +57,7 @@ def verify_token(token: str, secret: str) -> Optional[dict]:
     try:
         payload = jwt.decode(token, secret, algorithms=[settings.jwt.jwt_algorithm])
         return payload
-    except JWTError:
+    except jwt.PyJWTError:
         return None
 
 
@@ -122,17 +129,6 @@ def clear_auth_cookies(response: Response):
 def get_token_from_cookie(request, cookie_name: str) -> Optional[str]:
     """Get token from cookie with proper error handling."""
     try:
-        # Handle different types of FastAPI request objects
-        if hasattr(request, 'cookies') and request.cookies:
-            token = request.cookies.get(cookie_name)
-            if token:
-                print(f"Found {cookie_name} in cookies: {token[:20]}...")
-                return token
-            else:
-                print(f"No {cookie_name} found in cookies. Available cookies: {list(request.cookies.keys())}")
-        else:
-            print(f"No cookies found in request or request has no cookies attribute")
-        return None
-    except Exception as e:
-        print(f"Error getting token from cookie {cookie_name}: {str(e)}")
+        return request.cookies.get(cookie_name) or None
+    except Exception:
         return None

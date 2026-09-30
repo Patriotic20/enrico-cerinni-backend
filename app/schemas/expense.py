@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from datetime import datetime
 from typing import Optional
 from decimal import Decimal
@@ -23,12 +23,13 @@ class ExpenseBase(BaseModel):
 
 
 class ExpenseCreate(ExpenseBase):
+    amount: Decimal = Field(gt=0)
     _check_category = field_validator("category")(_validate_category)
 
 
 class ExpenseUpdate(BaseModel):
     description: Optional[str] = None
-    amount: Optional[Decimal] = None
+    amount: Optional[Decimal] = Field(None, gt=0)
     category: Optional[str] = None
     date: Optional[datetime] = None
     notes: Optional[str] = None

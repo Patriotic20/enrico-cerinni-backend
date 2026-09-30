@@ -22,7 +22,7 @@ router = APIRouter(prefix="/clients", tags=["Clients"])
 
 
 @router.get("/", response_model=ResponseModel)
-async def get_clients(
+def get_clients(
     name: Optional[str] = Query(None, description="Filter by client name"),
     email: Optional[str] = Query(None, description="Filter by email"),
     phone: Optional[str] = Query(None, description="Filter by phone"),
@@ -94,7 +94,7 @@ async def get_clients(
 
 
 @router.get("/insights", response_model=ResponseModel)
-async def get_client_insights(
+def get_client_insights(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -107,7 +107,7 @@ async def get_client_insights(
 
 
 @router.get("/{client_id}", response_model=ResponseModel)
-async def get_client(
+def get_client(
     client_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -138,7 +138,7 @@ async def get_client(
 
 
 @router.post("/", response_model=ResponseModel)
-async def create_client(
+def create_client(
     client_data: ClientCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -168,7 +168,7 @@ async def create_client(
 
 
 @router.put("/{client_id}", response_model=ResponseModel)
-async def update_client(
+def update_client(
     client_id: int,
     client_data: ClientUpdate,
     db: Session = Depends(get_db),
@@ -202,7 +202,7 @@ async def update_client(
 
 
 @router.delete("/{client_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
-async def delete_client(
+def delete_client(
     client_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -218,7 +218,7 @@ async def delete_client(
 
 
 @router.patch("/{client_id}/debt", response_model=ResponseModel, dependencies=[Depends(require_staff)])
-async def update_client_debt(
+def update_client_debt(
     client_id: int,
     debt_data: ClientDebtUpdate,
     db: Session = Depends(get_db),

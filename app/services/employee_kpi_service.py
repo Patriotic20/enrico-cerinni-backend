@@ -25,9 +25,11 @@ def prorated_target(monthly_target, start: date, end: date) -> Decimal:
     """
     total = Decimal(0)
     day = start
-    while day <= end:
-        total += Decimal(monthly_target) / calendar.monthrange(day.year, day.month)[1]
-        day += timedelta(days=1)
+    while day <= end:  # one step per calendar month, not per day
+        days_in_month = calendar.monthrange(day.year, day.month)[1]
+        seg_end = min(end, day.replace(day=days_in_month))
+        total += Decimal(monthly_target) * ((seg_end - day).days + 1) / days_in_month
+        day = seg_end + timedelta(days=1)
     return total
 
 
@@ -203,3 +205,13 @@ class EmployeeKpiService:
             "target_pct": sum(k["revenue"] for k in planned) / target * 100 if target else None,
             "active_sellers": sum(1 for k in items if k["sales_count"]),
         }
+
+
+if __name__ == "__main__":
+    assert prorated_target(3000, date(2026, 9, 1), date(2026, 9, 30)) == 3000
+    assert prorated_target(3100, date(2026, 1, 1), date(2026, 1, 10)) == 1000
+    # 15 of 31 Jan days + 14 of 28 Feb days
+    got = prorated_target(100, date(2026, 1, 17), date(2026, 2, 14))
+    assert abs(got - (Decimal(100) * 15 / 31 + Decimal(100) * 14 / 28)) < Decimal("1e-20")
+    assert prorated_target(100, date(2026, 3, 5), date(2026, 3, 4)) == 0
+    print("ok")

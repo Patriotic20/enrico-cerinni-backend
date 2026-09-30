@@ -7,7 +7,7 @@ from app.database import Base
 class Color(Base):
     __tablename__ = "colors"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     
     name = Column(String(100), unique=True, index=True, nullable=False)
     hex_code = Column(String(7), nullable=True)  # Hex color code

@@ -62,7 +62,7 @@ def _sale_response(sale: Sale) -> SaleResponse:
 
 
 @router.post("/", response_model=ResponseModel)
-async def create_sale(
+def create_sale(
     sale_data: SaleCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -84,7 +84,7 @@ async def create_sale(
 
 
 @router.get("/", response_model=ResponseModel, dependencies=[Depends(require_staff)])
-async def get_sales(
+def get_sales(
     client_id: Optional[int] = Query(None, description="Filter by client ID"),
     seller_id: Optional[int] = Query(None, description="Filter by seller (employee) ID"),
     payment_method: Optional[str] = Query(None, description="Filter by payment method"),
@@ -127,7 +127,7 @@ async def get_sales(
 
 
 @router.get("/stats/", response_model=ResponseModel, dependencies=[Depends(require_staff)])
-async def get_sales_stats(
+def get_sales_stats(
     client_id: Optional[int] = Query(None),
     seller_id: Optional[int] = Query(None),
     payment_method: Optional[str] = Query(None),
@@ -160,13 +160,17 @@ async def get_sales_stats(
 
 
 @router.post("/debt-payment", response_model=ResponseModel)
-async def process_debt_payment(
+def process_debt_payment(
     payment_data: DebtPaymentRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Process a debt payment for a client."""
-    client = db.query(Client).filter(Client.id == payment_data.client_id).first()
+    # FOR UPDATE on client + its unpaid sales: two concurrent payments must not
+    # both pass the outstanding check.
+    client = (
+        db.query(Client).filter(Client.id == payment_data.client_id).with_for_update().first()
+    )
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
@@ -185,6 +189,7 @@ async def process_debt_payment(
             Sale.status.in_([SaleStatus.DEBT, SaleStatus.PARTIALLY_PAID]),
         )
         .order_by(Sale.created_at.asc(), Sale.id.asc())
+        .with_for_update()
         .all()
     )
     sales_outstanding = sum(
@@ -259,7 +264,7 @@ async def process_debt_payment(
 
 
 @router.get("/client/{client_id}/debt-history", response_model=ResponseModel)
-async def get_client_debt_history(
+def get_client_debt_history(
     client_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -304,7 +309,7 @@ async def get_client_debt_history(
 
 
 @router.patch("/{sale_id}/cancel", response_model=ResponseModel, dependencies=[Depends(require_staff)])
-async def cancel_sale(
+def cancel_sale(
     sale_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -322,9 +327,9 @@ async def cancel_sale(
 
 
 @router.post("/{sale_id}/pay-debt", response_model=ResponseModel)
-async def pay_sale_debt(
+def pay_sale_debt(
     sale_id: int,
-    payment_amount: Decimal,
+    payment_amount: Decimal = Query(..., gt=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -343,7 +348,7 @@ async def pay_sale_debt(
 
 
 @router.get("/client/{client_id}/debts", response_model=ResponseModel)
-async def get_client_debts(
+def get_client_debts(
     client_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -362,7 +367,7 @@ async def get_client_debts(
 
 
 @router.get("/debt-stats", response_model=ResponseModel)
-async def get_debt_stats(
+def get_debt_stats(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -417,54 +422,56 @@ async def get_debt_stats(
 
 
 @router.get("/debt-trend", response_model=ResponseModel)
-async def get_debt_trend(
+def get_debt_trend(
     days: int = Query(30, ge=1, le=365, description="Number of days to get trend data"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Get debt trend data over time."""
+    """Get debt trend data over time.
+
+    Point k is start + k days; it counts every still-unpaid sale created at or
+    before that instant. One grouped query per series instead of two per day.
+    """
     from datetime import datetime, timedelta
-    from sqlalchemy import func, and_
+    from sqlalchemy import func
 
     end_date = datetime.now()
     start_date = end_date - timedelta(days=days)
+    unpaid = (
+        Sale.status.in_([SaleStatus.DEBT, SaleStatus.PARTIALLY_PAID]),
+        Sale.created_at <= end_date,
+    )
 
-    # Generate date range
+    # First point a sale belongs to: ceil((created_at - start) / 1 day), min 0.
+    def first_point(col):
+        return func.greatest(func.ceil(func.extract("epoch", col - start_date) / 86400), 0)
+
+    k = first_point(Sale.created_at).label("k")
+    debt_by_k = {
+        int(b): amount
+        for b, amount in db.query(k, func.sum(Sale.total_amount - Sale.paid_amount))
+        .filter(*unpaid).group_by(k).all()
+    }
+    # A client counts from their first unpaid sale onwards.
+    first_sale = (
+        db.query(func.min(Sale.created_at).label("first_at"))
+        .filter(*unpaid, Sale.client_id.isnot(None))
+        .group_by(Sale.client_id)
+        .subquery()
+    )
+    ck = first_point(first_sale.c.first_at).label("k")
+    clients_by_k = {int(b): n for b, n in db.query(ck, func.count()).group_by(ck).all()}
+
     trend_data = []
-    current_date = start_date
-
-    while current_date <= end_date:
-        # Get total debt amount for this date
-        total_debt = (
-            db.query(func.coalesce(func.sum(Sale.total_amount - Sale.paid_amount), 0))
-            .filter(
-                and_(
-                    Sale.status.in_(["debt", "partially_paid"]),
-                    Sale.created_at <= current_date
-                )
-            )
-            .scalar()
-        ) or 0
-
-        # Get number of clients with debt for this date
-        client_count = (
-            db.query(func.count(func.distinct(Sale.client_id)))
-            .filter(
-                and_(
-                    Sale.status.in_(["debt", "partially_paid"]),
-                    Sale.created_at <= current_date
-                )
-            )
-            .scalar()
-        ) or 0
-
+    total_debt, client_count = Decimal(0), 0
+    for i in range(days + 1):
+        total_debt += debt_by_k.get(i, 0) or 0
+        client_count += clients_by_k.get(i, 0)
         trend_data.append({
-            "date": current_date.strftime("%Y-%m-%d"),
+            "date": (start_date + timedelta(days=i)).strftime("%Y-%m-%d"),
             "total_debt": float(total_debt),
-            "client_count": client_count
+            "client_count": client_count,
         })
-
-        current_date += timedelta(days=1)
 
     return ResponseModel(
         success=True,
@@ -474,58 +481,44 @@ async def get_debt_trend(
 
 
 @router.get("/payment-trend", response_model=ResponseModel)
-async def get_payment_trend(
+def get_payment_trend(
     days: int = Query(30, ge=1, le=365, description="Number of days to get payment trend data"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Get payment trend data over time."""
+    """Get payment trend data over time.
+
+    Bucket k covers [start + k days, start + k+1 days); one grouped query.
+    """
     from datetime import datetime, timedelta
-    from sqlalchemy import func, and_
+    from sqlalchemy import func
 
     end_date = datetime.now()
     start_date = end_date - timedelta(days=days)
 
-    # Generate date range
+    k = func.floor(
+        func.extract("epoch", Transaction.created_at - start_date) / 86400
+    ).label("k")
+    rows = (
+        db.query(k, func.sum(Transaction.amount), func.count(Transaction.id))
+        .filter(
+            Transaction.transaction_type == TransactionType.DEBT_PAYMENT,
+            Transaction.created_at >= start_date,
+            Transaction.created_at < start_date + timedelta(days=days + 1),
+        )
+        .group_by(k)
+        .all()
+    )
+    by_k = {int(b): (total, n) for b, total, n in rows}
+
     trend_data = []
-    current_date = start_date
-
-    while current_date <= end_date:
-        next_date = current_date + timedelta(days=1)
-        
-        # Get total payment amount for this date (debt payments only)
-        total_payments = (
-            db.query(func.coalesce(func.sum(Transaction.amount), 0))
-            .filter(
-                and_(
-                    Transaction.transaction_type == TransactionType.DEBT_PAYMENT,
-                    Transaction.created_at >= current_date,
-                    Transaction.created_at < next_date
-                )
-            )
-            .scalar()
-        ) or 0
-
-        # Get number of payment transactions for this date
-        payment_count = (
-            db.query(func.count(Transaction.id))
-            .filter(
-                and_(
-                    Transaction.transaction_type == TransactionType.DEBT_PAYMENT,
-                    Transaction.created_at >= current_date,
-                    Transaction.created_at < next_date
-                )
-            )
-            .scalar()
-        ) or 0
-
+    for i in range(days + 1):
+        total, n = by_k.get(i, (0, 0))
         trend_data.append({
-            "date": current_date.strftime("%Y-%m-%d"),
-            "total_payments": float(total_payments),
-            "payment_count": payment_count
+            "date": (start_date + timedelta(days=i)).strftime("%Y-%m-%d"),
+            "total_payments": float(total or 0),
+            "payment_count": n,
         })
-
-        current_date += timedelta(days=1)
 
     return ResponseModel(
         success=True,
@@ -535,7 +528,7 @@ async def get_payment_trend(
 
 
 @router.get("/{sale_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
-async def get_sale(
+def get_sale(
     sale_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),

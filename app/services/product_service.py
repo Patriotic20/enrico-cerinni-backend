@@ -1,4 +1,4 @@
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy import and_, or_, select, func
 from typing import List, Optional, Tuple
 from decimal import Decimal
@@ -16,6 +16,16 @@ from app.schemas.product import (
 from app.utils.helpers import generate_sku, paginate_query, calculate_pagination_info
 from fastapi import HTTPException, status
 
+
+
+PRODUCT_DETAILS = (
+    selectinload(Product.variants).options(
+        joinedload(ProductVariant.color), joinedload(ProductVariant.size)
+    ),
+    joinedload(Product.brand),
+    joinedload(Product.season),
+    joinedload(Product.category),
+)
 
 class ProductService:
     def __init__(self, db: Session):
@@ -79,10 +89,15 @@ class ProductService:
 
     def get_product(self, product_id: int) -> Optional[Product]:
         """Get a product by ID."""
-        return self.db.query(Product).filter(Product.id == product_id).first()
+        return (
+            self.db.query(Product)
+            .options(*PRODUCT_DETAILS)
+            .filter(Product.id == product_id)
+            .first()
+        )
 
     def get_products(self, filters: ProductFilter) -> Tuple[List[Product], dict]:
-        query = self.db.query(Product).options(joinedload(Product.variants))
+        query = self.db.query(Product)
 
         if filters.name:
             query = query.filter(Product.name.ilike(f"%{filters.name}%"))
@@ -98,22 +113,25 @@ class ProductService:
 
         if filters.search:
             search_term = f"%{filters.search}%"
-            # Outer joins: products without variants or brand must stay findable.
-            query = query.outerjoin(ProductVariant, ProductVariant.product_id == Product.id).outerjoin(
-                Brand, Brand.id == Product.brand_id
-            ).filter(
+            # EXISTS instead of join + DISTINCT: no row multiplication, and each
+            # branch can use its trigram index.
+            query = query.filter(
                 or_(
                     Product.name.ilike(search_term),
                     Product.description.ilike(search_term),
                     Product.sku.ilike(search_term),
-                    ProductVariant.sku.ilike(search_term),
-                    Brand.name.ilike(search_term),
+                    Product.variants.any(ProductVariant.sku.ilike(search_term)),
+                    Product.brand.has(Brand.name.ilike(search_term)),
                 )
-            ).distinct()
+            )
 
-        # Apply pagination
         total = query.count()
-        paginated_query = paginate_query(query, filters.page, filters.size)
+        # Stable order: the frontend fetches pages in parallel and would
+        # otherwise see duplicates/gaps. Everything the response reads is
+        # loaded up front instead of lazily per row.
+        paginated_query = paginate_query(
+            query.order_by(Product.id).options(*PRODUCT_DETAILS), filters.page, filters.size
+        )
         products = paginated_query.all()
         
         pagination_info = calculate_pagination_info(total, filters.page, filters.size)
@@ -194,43 +212,6 @@ class ProductService:
         self.db.commit()
         return True
 
-    def search_products(
-        self, search_term: str, page: int = 1, size: int = 10
-    ) -> Tuple[List[Product], dict]:
-        """Search products by name, brand, or SKU."""
-        query = self.db.query(Product).filter(
-            or_(
-                Product.name.ilike(f"%{search_term}%"),
-                Product.sku.ilike(f"%{search_term}%"),
-            )
-        )
-
-        total = query.count()
-        query = paginate_query(query, page, size)
-        products = query.all()
-
-        # Load variants for each product with relationships
-        for product in products:
-            # Ensure variants are loaded with their relationships
-            if hasattr(product, 'variants'):
-                # Force load the variants with their color and size relationships
-                for variant in product.variants:
-                    # Access the relationships to ensure they're loaded
-                    _ = variant.color
-                    _ = variant.size
-            else:
-                product.variants = []
-
-        pagination = calculate_pagination_info(total, page, size)
-        return products, pagination
-
-    def get_product_by_sku(self, sku: str):
-        """Get product by SKU."""
-        product_variant = self.db.query(ProductVariant).filter(ProductVariant.sku == sku).first()
-        if product_variant:
-            return product_variant
-        return None
-    
     def get_product_by_variant_sku(self, sku: str):
         """Get full product with all variants by variant SKU."""
         # Matched case-insensitively and with surrounding whitespace stripped on

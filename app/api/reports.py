@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import Optional, List
@@ -23,6 +24,8 @@ from app.api.deps import get_current_active_user, require_staff
 from app.models.user import User
 from app.models.report import ReportType, ReportExecution, ReportStatus
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/reports", tags=["Reports"], dependencies=[Depends(require_staff)])
 
 
@@ -43,7 +46,7 @@ def _date_filters(start_date: Optional[str], end_date: Optional[str]) -> ReportF
 
 
 @router.post("/generate", response_model=ResponseModel)
-async def generate_report(
+def generate_report(
     request: ReportGenerateRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
@@ -130,11 +133,12 @@ async def generate_report(
         db.add(execution)
         db.commit()
         
-        raise HTTPException(status_code=500, detail=f"Failed to generate report: {str(e)}")
+        logger.exception("Failed to generate report")
+        raise HTTPException(status_code=500, detail="Failed to generate report")
 
 
 @router.get("/sales", response_model=ResponseModel)
-async def get_sales_report(
+def get_sales_report(
     start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
     end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
     client_ids: Optional[List[int]] = Query(None, description="Client IDs to filter"),
@@ -162,7 +166,7 @@ async def get_sales_report(
 
 
 @router.get("/finance", response_model=ResponseModel)
-async def get_finance_report(
+def get_finance_report(
     start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
     end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
@@ -183,7 +187,7 @@ async def get_finance_report(
 
 
 @router.get("/inventory", response_model=ResponseModel)
-async def get_inventory_report(
+def get_inventory_report(
     start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
     end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
@@ -201,7 +205,7 @@ async def get_inventory_report(
 
 
 @router.get("/clients", response_model=ResponseModel)
-async def get_clients_report(
+def get_clients_report(
     start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
     end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
@@ -222,7 +226,7 @@ async def get_clients_report(
 
 
 @router.get("/performance", response_model=ResponseModel)
-async def get_performance_report(
+def get_performance_report(
     start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
     end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
@@ -243,7 +247,7 @@ async def get_performance_report(
 
 
 @router.get("/saved", response_model=ResponseModel)
-async def get_saved_reports(
+def get_saved_reports(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),
     db: Session = Depends(get_db),
@@ -286,7 +290,7 @@ async def get_saved_reports(
 
 
 @router.get("/templates", response_model=ResponseModel)
-async def get_report_templates(
+def get_report_templates(
     report_type: Optional[ReportTypeEnum] = Query(None, description="Filter by report type"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -318,7 +322,7 @@ async def get_report_templates(
 
 
 @router.post("/export", response_model=ResponseModel)
-async def export_report(
+def export_report(
     request: ReportExportRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),

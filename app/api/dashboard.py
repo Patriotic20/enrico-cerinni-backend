@@ -13,7 +13,7 @@ router = APIRouter(prefix="/dashboard", tags=["Dashboard"], dependencies=[Depend
 
 
 @router.get("/stats", response_model=ResponseModel)
-async def get_dashboard_stats(
+def get_dashboard_stats(
     db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)
 ):
     dashboard_service = DashboardService(db)
@@ -25,7 +25,7 @@ async def get_dashboard_stats(
 
 
 @router.get("/recent-transactions", response_model=ResponseModel)
-async def get_recent_transactions(
+def get_recent_transactions(
     limit: int = Query(10, ge=1, le=50, description="Number of recent transactions"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -42,7 +42,7 @@ async def get_recent_transactions(
 
 
 @router.get("/financial-summary", response_model=ResponseModel)
-async def get_financial_summary(
+def get_financial_summary(
     start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
     end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
     db: Session = Depends(get_db),
@@ -79,7 +79,7 @@ async def get_financial_summary(
 
 
 @router.get("/cashflow", response_model=ResponseModel)
-async def get_cashflow_data(
+def get_cashflow_data(
     period: str = Query("1month", description="Time period: 1week, 1month, 3months, 6months, 1year"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -94,7 +94,7 @@ async def get_cashflow_data(
 
 
 @router.get("/profit-analysis", response_model=ResponseModel)
-async def get_profit_data(
+def get_profit_data(
     period: str = Query("1month", description="Time period: 1week, 1month, 3months, 6months, 1year"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -109,7 +109,7 @@ async def get_profit_data(
 
 
 @router.get("/sales-performance", response_model=ResponseModel)
-async def get_sales_performance_data(
+def get_sales_performance_data(
     period: str = Query("1month", description="Time period: 1week, 1month, 3months, 6months, 1year"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -124,7 +124,7 @@ async def get_sales_performance_data(
 
 
 @router.get("/expense-breakdown", response_model=ResponseModel)
-async def get_expense_breakdown_data(
+def get_expense_breakdown_data(
     period: str = Query("1month", description="Time period: 1week, 1month, 3months, 6months, 1year"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),

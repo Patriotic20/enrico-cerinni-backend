@@ -32,7 +32,7 @@ class SaleStatus(str, enum.Enum):
 class Sale(Base):
     __tablename__ = "sales"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     
     receipt_number = Column(String(50), unique=True, index=True, nullable=False)
     
@@ -61,7 +61,7 @@ class Sale(Base):
 class SaleItem(Base):
     __tablename__ = "sale_items"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     
     sale_id = Column(Integer, ForeignKey("sales.id"), nullable=False)
     product_variant_id = Column(Integer, ForeignKey("product_variants.id"), nullable=False)

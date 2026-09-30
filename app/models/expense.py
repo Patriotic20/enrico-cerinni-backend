@@ -20,7 +20,7 @@ EXPENSE_CATEGORIES = (
 class Expense(Base):
     __tablename__ = "expenses"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
 
     description = Column(String, nullable=False)
     amount = Column(Numeric(14, 2), nullable=False)

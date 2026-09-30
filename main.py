@@ -27,19 +27,31 @@ from app.api import (
 )
 
 
+import os
+
+_prod = settings.server.is_production
 app = FastAPI(
     title="Enrico Cerrini Backend API",
     description="Backend API for Enrico Cerrini clothing store management system",
     version="1.0.0",
+    # Public API schema is a map for attackers; keep it to dev/staging.
+    docs_url=None if _prod else "/docs",
+    redoc_url=None if _prod else "/redoc",
+    openapi_url=None if _prod else "/openapi.json",
 )
 
 # Add CORS middleware with cookie support for local and LAN development
 allowed_origins = [origin.strip() for origin in settings.cors_origin.split(",") if origin.strip()]
 
 # Allow any LAN IP like http://192.168.x.x:3000 or http://10.x.x.x:3000 (and other ports)
-ALLOWED_ORIGIN_REGEX = (
+# in development only: with credentials on, any device on the network could
+# otherwise read logged-in responses. CORS_ORIGIN_REGEX overrides it.
+_LAN_ORIGIN_REGEX = (
     r"^http://(localhost|127\.0\.0\.1|(10|172\.(1[6-9]|2[0-9]|3[0-1])|192\.168)"
     r"(?:\.\d{1,3}){1,2})(?::\d+)?$"
+)
+ALLOWED_ORIGIN_REGEX = os.getenv("CORS_ORIGIN_REGEX") or (
+    _LAN_ORIGIN_REGEX if settings.server.is_development else None
 )
 
 app.add_middleware(
@@ -66,7 +78,9 @@ def _cors_headers(request) -> dict:
     if not origin:
         return {}
 
-    if origin in allowed_origins or re.match(ALLOWED_ORIGIN_REGEX, origin):
+    if origin in allowed_origins or (
+        ALLOWED_ORIGIN_REGEX and re.match(ALLOWED_ORIGIN_REGEX, origin)
+    ):
         return {
             "Access-Control-Allow-Origin": origin,
             "Access-Control-Allow-Credentials": "true",
@@ -77,7 +91,7 @@ def _cors_headers(request) -> dict:
 
 # Global exception handler
 @app.exception_handler(Exception)
-async def global_exception_handler(request, exc):
+def global_exception_handler(request, exc):
     # Log the full traceback — otherwise the cause of a 500 is invisible in prod.
     logger.exception(
         "Unhandled error on %s %s", request.method, request.url.path, exc_info=exc
@@ -97,7 +111,7 @@ async def global_exception_handler(request, exc):
 
 
 @app.exception_handler(HTTPException)
-async def http_exception_handler(request, exc):
+def http_exception_handler(request, exc):
     return JSONResponse(
         status_code=exc.status_code,
         # `detail` is kept alongside `message` because the frontend reads both.
@@ -138,7 +152,7 @@ def on_startup():
 
 # Health check endpoint
 @app.get("/health")
-async def health_check():
+def health_check():
     return {
         "success": True,
         "message": "API is running",
@@ -148,14 +162,14 @@ async def health_check():
 
 # Root endpoint
 @app.get("/")
-async def root():
+def root():
     return {
         "success": True,
         "message": "Enrico Cerrini Backend API",
         "data": {
             "title": "Enrico Cerrini Backend API",
             "version": "1.0.0",
-            "docs": "/docs",
+            "docs": None if _prod else "/docs",
         },
     }
 

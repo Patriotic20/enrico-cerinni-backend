@@ -8,8 +8,10 @@ engine = create_engine(
     settings.database.sync_database_url,
     pool_pre_ping=True,
     pool_recycle=300,
+    # Per worker process. Keep pool_size+max_overflow times WEB_CONCURRENCY below
+    # Postgres max_connections (100 by default).
     pool_size=10,
-    max_overflow=20,
+    max_overflow=10,
 )
 
 # Create session factory

@@ -7,7 +7,7 @@ from app.database import Base
 class Size(Base):
     __tablename__ = "sizes"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     
     name = Column(String(50), unique=True, index=True, nullable=False)
     description = Column(Text, nullable=True)

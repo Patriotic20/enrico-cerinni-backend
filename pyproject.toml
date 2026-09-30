@@ -6,16 +6,17 @@ description = "Backend API for Enrico Cerrini clothing store management system"
 # (TypingOnly assertion). Raise it only together with the SQLAlchemy version.
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "fastapi==0.104.1",
+    "fastapi==0.115.12",
     "uvicorn[standard]==0.24.0",
     "sqlalchemy==2.0.23",
     "psycopg2-binary==2.9.9",
     "alembic==1.12.1",
     "pydantic[email]",
     "pydantic-settings==2.1.0",
-    "python-jose[cryptography]==3.3.0",
-    "passlib[bcrypt]==1.7.4",
-    "python-multipart==0.0.6",
+    "pyjwt==2.10.1",
+    "cryptography",
+    "bcrypt",
+    "python-multipart==0.0.20",
     "python-dotenv==1.0.0",
     "httpx==0.25.2"
 ]

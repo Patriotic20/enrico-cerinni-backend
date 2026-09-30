@@ -25,7 +25,7 @@ def _period(start_date: Optional[date], end_date: Optional[date]) -> tuple[date,
 
 
 @router.get("/sellers", response_model=ResponseModel, dependencies=[Depends(get_current_active_user)])
-async def get_sellers(db: Session = Depends(get_db)):
+def get_sellers(db: Session = Depends(get_db)):
     """Sellers offered at checkout — open to cashiers, so no salary data."""
     sellers = (
         db.query(Employee)
@@ -41,7 +41,7 @@ async def get_sellers(db: Session = Depends(get_db)):
 
 
 @router.get("/kpi", response_model=ResponseModel, dependencies=[Depends(require_staff)])
-async def get_kpi(
+def get_kpi(
     start_date: Optional[date] = Query(None, description="Defaults to the first day of this month"),
     end_date: Optional[date] = Query(None, description="Inclusive; defaults to the last day of this month"),
     db: Session = Depends(get_db),
@@ -55,7 +55,7 @@ async def get_kpi(
 
 
 @router.get("/{employee_id}/kpi", response_model=ResponseModel, dependencies=[Depends(require_staff)])
-async def get_employee_kpi(
+def get_employee_kpi(
     employee_id: int,
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),

@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
 from decimal import Decimal
 from datetime import datetime
@@ -12,7 +12,8 @@ class SaleItemBase(BaseModel):
 
 
 class SaleItemCreate(SaleItemBase):
-    pass
+    quantity: int = Field(gt=0)
+    unit_price: Decimal = Field(gt=0)
 
 
 class SaleItemResponse(SaleItemBase):
@@ -38,6 +39,8 @@ class SaleBase(BaseModel):
 
 
 class SaleCreate(SaleBase):
+    paid_amount: Decimal = Field(0, ge=0)
+    items: List[SaleItemCreate] = Field(min_length=1)
     # Required for new sales: per-seller KPI is computed from it.
     seller_id: int
 
@@ -88,4 +91,4 @@ class PaginatedSaleResponse(BaseModel):
 
 class DebtPaymentRequest(BaseModel):
     client_id: int
-    payment_amount: Decimal
+    payment_amount: Decimal = Field(gt=0)

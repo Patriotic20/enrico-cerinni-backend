@@ -44,7 +44,7 @@ class Report(Base):
     """
     __tablename__ = "reports"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     
     # Basic report information
     name = Column(String(255), nullable=False)
@@ -80,7 +80,7 @@ class ReportTemplate(Base):
     """
     __tablename__ = "report_templates"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     
     # Template information
     name = Column(String(255), nullable=False)
@@ -109,7 +109,7 @@ class ReportExecution(Base):
     """
     __tablename__ = "report_executions"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     
     # Report reference
     report_id = Column(Integer, ForeignKey("reports.id"), nullable=True)

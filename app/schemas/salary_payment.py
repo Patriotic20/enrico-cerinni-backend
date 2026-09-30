@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from datetime import datetime
 from typing import Optional
 from decimal import Decimal
@@ -12,12 +12,12 @@ class SalaryPaymentBase(BaseModel):
 
 
 class SalaryPaymentCreate(SalaryPaymentBase):
-    pass
+    amount: Decimal = Field(gt=0)
 
 
 class SalaryPaymentUpdate(BaseModel):
     employee_id: Optional[int] = None
-    amount: Optional[Decimal] = None
+    amount: Optional[Decimal] = Field(None, gt=0)
     payment_date: Optional[datetime] = None
     notes: Optional[str] = None
 

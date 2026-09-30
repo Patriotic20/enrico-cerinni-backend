@@ -1,4 +1,4 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload, joinedload
 from sqlalchemy import func, or_
 from typing import List, Optional, Tuple
 from decimal import Decimal
@@ -18,15 +18,34 @@ from app.utils.helpers import (
 from fastapi import HTTPException, status
 from app.models.user import User
 
+# Everything _sale_response touches, loaded up front instead of lazily per row.
+SALE_DETAILS = (
+    selectinload(Sale.items)
+    .joinedload(SaleItem.product_variant)
+    .options(
+        joinedload(ProductVariant.product),
+        joinedload(ProductVariant.color),
+        joinedload(ProductVariant.size),
+    ),
+    joinedload(Sale.client),
+    joinedload(Sale.seller),
+)
+
+
 class SaleService:
     def __init__(self, db: Session):
         self.db = db
 
     def create_sale(self, sale_data: SaleCreate, current_user: User) -> Sale:
         """Create a new sale with items."""
+        client = None
         if sale_data.client_id:
+            # Row lock: concurrent sales/payments for one client must not lose debt updates.
             client = (
-                self.db.query(Client).filter(Client.id == sale_data.client_id).first()
+                self.db.query(Client)
+                .filter(Client.id == sale_data.client_id)
+                .with_for_update()
+                .first()
             )
             if not client:
                 raise HTTPException(
@@ -39,28 +58,44 @@ class SaleService:
                 status_code=status.HTTP_400_BAD_REQUEST, detail="Seller not found"
             )
 
+        # One locked read for every variant: stops two tills selling the last unit.
+        variant_ids = {i.product_variant_id for i in sale_data.items}
+        variants = {
+            v.id: v
+            for v in self.db.query(ProductVariant)
+            .filter(ProductVariant.id.in_(variant_ids))
+            .order_by(ProductVariant.id)
+            .with_for_update()
+            .all()
+        }
+
         total_amount = Decimal("0")
         sale_items = []
+        requested = {}
 
         for item_data in sale_data.items:
-            product_variant = (
-                self.db.query(ProductVariant)
-                .filter(ProductVariant.id == item_data.product_variant_id)
-                .first()
-            )
-            if not product_variant:
+            product_variant = variants.get(item_data.product_variant_id)
+            if not product_variant or not product_variant.is_active:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Product variant with ID {item_data.product_variant_id} not found",
                 )
 
-            if product_variant.stock_quantity < item_data.quantity:
+            # Same variant may appear on several lines; check the combined quantity.
+            requested[product_variant.id] = requested.get(product_variant.id, 0) + item_data.quantity
+            if product_variant.stock_quantity < requested[product_variant.id]:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Insufficient stock for product variant {product_variant.sku}",
                 )
 
-            # Calculate item total
+            # Cashiers may discount but never charge above the list price.
+            if item_data.unit_price > product_variant.price:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Price for {product_variant.sku} exceeds list price {product_variant.price}",
+                )
+
             item_total = item_data.unit_price * item_data.quantity
             total_amount += item_total
 
@@ -80,11 +115,9 @@ class SaleService:
             sale_status = SaleStatus.COMPLETED
         else:
             sale_status = SaleStatus.PARTIALLY_PAID
-            
-            
-        if sale_data.paid_amount < total_amount and sale_data.client_id and client:
+
+        if sale_data.paid_amount < total_amount and client:
             client.debt_amount += total_amount - sale_data.paid_amount
-            self.db.commit()
 
         # Create sale
         receipt_number = generate_receipt_number()
@@ -130,12 +163,17 @@ class SaleService:
             self.db.add(transaction)
 
         self.db.commit()
-        self.db.refresh(db_sale)
-        return db_sale
+        return self.get_sale(db_sale.id)
 
     def get_sale(self, sale_id: int) -> Optional[Sale]:
         """Get a sale by ID."""
-        return self.db.query(Sale).filter(Sale.id == sale_id).first()
+        return (
+            self.db.query(Sale).options(*SALE_DETAILS).filter(Sale.id == sale_id).first()
+        )
+
+    def _lock_sale(self, sale_id: int) -> Optional[Sale]:
+        """Sale row under FOR UPDATE: serialises cancel / pay-debt on the same sale."""
+        return self.db.query(Sale).filter(Sale.id == sale_id).with_for_update().first()
 
     def filtered_query(self, filters: SaleFilter):
         """Sales query with every list filter applied (no ordering/paging)."""
@@ -193,8 +231,7 @@ class SaleService:
         # Get total count
         total = query.count()
 
-        # Set working directory
-        query = query.order_by(Sale.created_at.desc())
+        query = query.options(*SALE_DETAILS).order_by(Sale.created_at.desc())
         # Apply pagination
         query = paginate_query(query, filters.page, filters.size)
 
@@ -246,7 +283,7 @@ class SaleService:
 
     def cancel_sale(self, sale_id: int, current_user: User) -> Optional[Sale]:
         """Cancel a sale and restore stock."""
-        sale = self.get_sale(sale_id)
+        sale = self._lock_sale(sale_id)
         if not sale:
             return None
 
@@ -256,17 +293,20 @@ class SaleService:
                 detail="Sale is already cancelled",
             )
 
-        # Restore stock
+        # Restore stock atomically in SQL so a concurrent sale can't lose the update.
         for item in sale.items:
-            product_variant = (
-                self.db.query(ProductVariant).filter(ProductVariant.id == item.product_variant_id).first()
+            self.db.query(ProductVariant).filter(
+                ProductVariant.id == item.product_variant_id
+            ).update(
+                {ProductVariant.stock_quantity: ProductVariant.stock_quantity + item.quantity},
+                synchronize_session=False,
             )
-            if product_variant:
-                product_variant.stock_quantity += item.quantity
 
         # Update client debt if applicable
         if sale.status in [SaleStatus.DEBT, SaleStatus.PARTIALLY_PAID] and sale.client_id:
-            client = self.db.query(Client).filter(Client.id == sale.client_id).first()
+            client = (
+                self.db.query(Client).filter(Client.id == sale.client_id).with_for_update().first()
+            )
             if client:
                 client.debt_amount -= (sale.total_amount - sale.paid_amount)
 
@@ -285,59 +325,16 @@ class SaleService:
         self.db.add(transaction)
 
         self.db.commit()
-        self.db.refresh(sale)
-        return sale
-
-    def get_sales_summary(
-        self, start_date: datetime = None, end_date: datetime = None
-    ) -> dict:
-        """Get sales summary for a period."""
-        query = self.db.query(Sale).filter(Sale.status == SaleStatus.COMPLETED)
-
-        if start_date:
-            query = query.filter(Sale.created_at >= start_date)
-
-        if end_date:
-            query = query.filter(Sale.created_at <= end_date)
-
-        total_sales = query.count()
-        total_revenue = query.with_entities(
-            func.sum(Sale.total_amount) # Changed from final_amount to total_amount
-        ).scalar() or Decimal("0")
-
-        # Get sales by payment method
-        payment_methods = (
-            query.with_entities(
-                Sale.payment_method,
-                func.count(Sale.id).label("count"),
-                func.sum(Sale.total_amount).label("total"), # Changed from final_amount to total_amount
-            )
-            .group_by(Sale.payment_method)
-            .all()
-        )
-
-        return {
-            "total_sales": total_sales,
-            "total_revenue": total_revenue,
-            "payment_methods": [
-                {"method": pm.payment_method, "count": pm.count, "total": pm.total}
-                for pm in payment_methods
-            ],
-        }
-
-    def get_recent_sales(self, limit: int = 10) -> List[Sale]:
-        """Get recent sales."""
-        return (
-            self.db.query(Sale)
-            .filter(Sale.status == SaleStatus.COMPLETED)
-            .order_by(Sale.created_at.desc())
-            .limit(limit)
-            .all()
-        )
+        return self.get_sale(sale.id)
 
     def pay_debt(self, sale_id: int, payment_amount: Decimal, current_user: User) -> Sale:
         """Pay remaining debt for a sale."""
-        sale = self.get_sale(sale_id)
+        if payment_amount <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Payment amount must be greater than zero"
+            )
+        sale = self._lock_sale(sale_id)
         if not sale:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -365,7 +362,9 @@ class SaleService:
 
         # Update client debt
         if sale.client_id:
-            client = self.db.query(Client).filter(Client.id == sale.client_id).first()
+            client = (
+                self.db.query(Client).filter(Client.id == sale.client_id).with_for_update().first()
+            )
             if client:
                 client.debt_amount -= payment_amount
 
@@ -390,13 +389,13 @@ class SaleService:
         self.db.add(transaction)
 
         self.db.commit()
-        self.db.refresh(sale)
-        return sale
+        return self.get_sale(sale.id)
 
     def get_client_debts(self, client_id: int) -> List[Sale]:
         """Get all debt sales for a specific client."""
         return (
             self.db.query(Sale)
+            .options(*SALE_DETAILS)
             .filter(
                 Sale.client_id == client_id,
                 Sale.status.in_([SaleStatus.DEBT, SaleStatus.PARTIALLY_PAID])

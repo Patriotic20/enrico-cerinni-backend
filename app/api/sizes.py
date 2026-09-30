@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
@@ -8,11 +9,13 @@ from app.schemas.common import ResponseModel
 from app.api.deps import get_current_active_user, require_staff
 from app.models.user import User
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/sizes", tags=["sizes"])
 
 
 @router.get("", response_model=ResponseModel)
-async def get_sizes(
+def get_sizes(
     db: Session = Depends(get_db), current_user: User = Depends(get_current_active_user)
 ):
     """Get all sizes."""
@@ -33,11 +36,12 @@ async def get_sizes(
             ],
         )
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to fetch sizes: {str(e)}")
+        logger.exception("Failed to fetch sizes")
+        return ResponseModel(success=False, message="Failed to fetch sizes")
 
 
 @router.post("", response_model=ResponseModel, dependencies=[Depends(require_staff)])
-async def create_size(
+def create_size(
     size_data: SizeCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -66,11 +70,12 @@ async def create_size(
             message="Size created successfully",
         )
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to create size: {str(e)}")
+        logger.exception("Failed to create size")
+        return ResponseModel(success=False, message="Failed to create size")
 
 
 @router.get("/{size_id}", response_model=ResponseModel)
-async def get_size(
+def get_size(
     size_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -93,11 +98,12 @@ async def get_size(
             message="Size retrieved successfully",
         )
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to fetch size: {str(e)}")
+        logger.exception("Failed to fetch size")
+        return ResponseModel(success=False, message="Failed to fetch size")
 
 
 @router.put("/{size_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
-async def update_size(
+def update_size(
     size_id: int,
     size_data: SizeUpdate,
     db: Session = Depends(get_db),
@@ -133,11 +139,12 @@ async def update_size(
             message="Size updated successfully",
         )
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to update size: {str(e)}")
+        logger.exception("Failed to update size")
+        return ResponseModel(success=False, message="Failed to update size")
 
 
 @router.delete("/{size_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
-async def delete_size(
+def delete_size(
     size_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -153,4 +160,5 @@ async def delete_size(
 
         return ResponseModel(success=True, message="Size deleted successfully")
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to delete size: {str(e)}")
+        logger.exception("Failed to delete size")
+        return ResponseModel(success=False, message="Failed to delete size")

@@ -13,18 +13,20 @@ class UserRole(str, enum.Enum):
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)
     phone = Column(String, nullable=True)
-    email = Column(String, nullable=True)
+    email = Column(String, nullable=True, index=True)
     
     username = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     role = Column(Enum(UserRole), default=UserRole.MANAGER, nullable=False)
     
     is_active = Column(Boolean, default=True, nullable=False)
+    # Bumped on logout / password change; refresh tokens carrying an older value are rejected.
+    token_version = Column(Integer, default=0, server_default="0", nullable=False)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

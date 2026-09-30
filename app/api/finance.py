@@ -21,7 +21,7 @@ router = APIRouter(prefix="/finance", tags=["Finance"], dependencies=[Depends(re
 
 
 @router.get("/expenses", response_model=ResponseModel)
-async def get_expenses(
+def get_expenses(
     category: Optional[str] = Query(None),
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
@@ -57,7 +57,7 @@ async def get_expenses(
 
 
 @router.get("/expenses/category/{category}", response_model=ResponseModel)
-async def get_expenses_by_category(
+def get_expenses_by_category(
     category: str,
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
@@ -89,7 +89,7 @@ async def get_expenses_by_category(
 
 
 @router.post("/expenses", response_model=ResponseModel)
-async def create_expense(
+def create_expense(
     expense_data: ExpenseCreate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
@@ -107,7 +107,7 @@ async def create_expense(
 
 
 @router.put("/expenses/{expense_id}", response_model=ResponseModel)
-async def update_expense(
+def update_expense(
     expense_id: int,
     expense_data: ExpenseUpdate,
     db: Session = Depends(get_db),
@@ -131,7 +131,7 @@ async def update_expense(
 
 
 @router.delete("/expenses/{expense_id}", response_model=ResponseModel)
-async def delete_expense(
+def delete_expense(
     expense_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
@@ -147,7 +147,7 @@ async def delete_expense(
 
 
 @router.get("/expenses/stats", response_model=ResponseModel)
-async def get_expense_stats(
+def get_expense_stats(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     db: Session = Depends(get_db),
@@ -160,7 +160,7 @@ async def get_expense_stats(
     if end_date:
         query = query.filter(Expense.date <= end_date)
 
-    expenses = query.all()
+    expense_count = query.count()
 
     # Salaries and stock purchases are canonical expense categories but live in
     # their own tables; the shared helper folds them in so the finance page's
@@ -183,7 +183,7 @@ async def get_expense_stats(
             "total_expenses": total_expenses,
             "monthly_expenses": monthly_expenses,
             "by_category": by_category,
-            "count": len(expenses),
+            "count": expense_count,
         },
         message="Expense statistics retrieved successfully",
     )
@@ -194,7 +194,7 @@ async def get_expense_stats(
 
 
 @router.get("/employees", response_model=ResponseModel)
-async def get_employees(
+def get_employees(
     search: Optional[str] = Query(None),
     page: int = Query(1, ge=1, description="Page number"),
     size: int = Query(20, ge=1, le=100, description="Page size"),
@@ -229,7 +229,7 @@ async def get_employees(
 
 
 @router.post("/employees", response_model=ResponseModel)
-async def create_employee(
+def create_employee(
     employee_data: EmployeeCreate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
@@ -247,7 +247,7 @@ async def create_employee(
 
 
 @router.put("/employees/{employee_id}", response_model=ResponseModel)
-async def update_employee(
+def update_employee(
     employee_id: int,
     employee_data: EmployeeUpdate,
     db: Session = Depends(get_db),
@@ -271,7 +271,7 @@ async def update_employee(
 
 
 @router.delete("/employees/{employee_id}", response_model=ResponseModel)
-async def delete_employee(
+def delete_employee(
     employee_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
@@ -301,7 +301,7 @@ async def delete_employee(
 
 
 @router.get("/suppliers", response_model=ResponseModel)
-async def get_suppliers(
+def get_suppliers(
     search: Optional[str] = Query(None),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
@@ -334,7 +334,7 @@ async def get_suppliers(
 
 
 @router.post("/suppliers", response_model=ResponseModel)
-async def create_supplier(
+def create_supplier(
     supplier_data: SupplierCreate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
@@ -352,7 +352,7 @@ async def create_supplier(
 
 
 @router.put("/suppliers/{supplier_id}", response_model=ResponseModel)
-async def update_supplier(
+def update_supplier(
     supplier_id: int,
     supplier_data: SupplierUpdate,
     db: Session = Depends(get_db),
@@ -376,7 +376,7 @@ async def update_supplier(
 
 
 @router.delete("/suppliers/{supplier_id}", response_model=ResponseModel)
-async def delete_supplier(
+def delete_supplier(
     supplier_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
@@ -395,7 +395,7 @@ async def delete_supplier(
 
 
 @router.get("/salary-payments", response_model=ResponseModel)
-async def get_salary_payments(
+def get_salary_payments(
     employee_id: Optional[int] = Query(None),
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
@@ -439,7 +439,7 @@ async def get_salary_payments(
 
 
 @router.post("/salary-payments", response_model=ResponseModel)
-async def create_salary_payment(
+def create_salary_payment(
     payment_data: SalaryPaymentCreate,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
@@ -466,7 +466,7 @@ async def create_salary_payment(
 
 
 @router.put("/salary-payments/{payment_id}", response_model=ResponseModel)
-async def update_salary_payment(
+def update_salary_payment(
     payment_id: int,
     payment_data: SalaryPaymentUpdate,
     db: Session = Depends(get_db),
@@ -500,7 +500,7 @@ async def update_salary_payment(
 
 
 @router.delete("/salary-payments/{payment_id}", response_model=ResponseModel)
-async def delete_salary_payment(
+def delete_salary_payment(
     payment_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),

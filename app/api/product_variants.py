@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
@@ -11,15 +12,17 @@ from app.schemas.product_variant import (
     ProductVariantBulkUpdate,
 )
 from app.schemas.common import ResponseModel
-from app.api.deps import get_current_active_user, require_staff
+from app.api.deps import get_current_active_user, require_staff, is_staff
 from app.models.user import User
 from app.utils.helpers import generate_sku
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/product-variants", tags=["product-variants"])
 
 
 @router.get("/product/{product_id}", response_model=ResponseModel)
-async def get_product_variants(
+def get_product_variants(
     product_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -45,7 +48,7 @@ async def get_product_variants(
                 "size_id": variant.size_id,
                 "sku": variant.sku,
                 "price": float(variant.price),
-                "cost_price": float(variant.cost_price) if variant.cost_price else None,
+                "cost_price": float(variant.cost_price) if variant.cost_price and is_staff(current_user) else None,
                 "stock_quantity": variant.stock_quantity,
                 "min_stock_level": variant.min_stock_level,
                 "is_active": variant.is_active,
@@ -63,11 +66,12 @@ async def get_product_variants(
             message="Product variants retrieved successfully",
         )
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to fetch product variants: {str(e)}")
+        logger.exception("Failed to fetch product variants")
+        return ResponseModel(success=False, message="Failed to fetch product variants")
 
 
 @router.post("/", response_model=ResponseModel, dependencies=[Depends(require_staff)])
-async def create_product_variant(
+def create_product_variant(
     variant_data: ProductVariantCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -135,11 +139,12 @@ async def create_product_variant(
             message="Product variant created successfully",
         )
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to create product variant: {str(e)}")
+        logger.exception("Failed to create product variant")
+        return ResponseModel(success=False, message="Failed to create product variant")
 
 
 @router.post("/bulk", response_model=ResponseModel, dependencies=[Depends(require_staff)])
-async def create_product_variants_bulk(
+def create_product_variants_bulk(
     bulk_data: ProductVariantBulkCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -165,20 +170,17 @@ async def create_product_variants_bulk(
             return ResponseModel(success=False, message="One or more sizes not found")
 
         created_variants = []
+        # Existing (color, size) pairs in one query; also dedups the request itself.
+        taken = set(
+            db.query(ProductVariant.color_id, ProductVariant.size_id)
+            .filter(ProductVariant.product_id == bulk_data.product_id)
+            .all()
+        )
 
         for variant_data in bulk_data.variants:
-            # Check if variant already exists
-            existing_variant = (
-                db.query(ProductVariant)
-                .filter(
-                    ProductVariant.product_id == bulk_data.product_id,
-                    ProductVariant.color_id == variant_data.color_id,
-                    ProductVariant.size_id == variant_data.size_id,
-                )
-                .first()
-            )
-
-            if not existing_variant:
+            pair = (variant_data.color_id, variant_data.size_id)
+            if pair not in taken:
+                taken.add(pair)
                 # Generate unique SKU if not provided
                 sku = variant_data.sku if variant_data.sku else generate_sku()
                 while (
@@ -201,9 +203,8 @@ async def create_product_variants_bulk(
 
         db.commit()
 
-        # Refresh all created variants
-        for variant in created_variants:
-            db.refresh(variant)
+        color_names = {c.id: c.name for c in colors}
+        size_names = {z.id: z.name for z in sizes}
 
         # Prepare response
         variant_responses = []
@@ -221,8 +222,8 @@ async def create_product_variants_bulk(
                 "is_active": variant.is_active,
                 "created_at": variant.created_at.isoformat() if variant.created_at else None,
                 "updated_at": variant.updated_at.isoformat() if variant.updated_at else None,
-                "color_name": variant.color.name if variant.color else None,
-                "size_name": variant.size.name if variant.size else None,
+                "color_name": color_names.get(variant.color_id),
+                "size_name": size_names.get(variant.size_id),
             }
             variant_responses.append(variant_data)
 
@@ -232,11 +233,12 @@ async def create_product_variants_bulk(
             message=f"Created {len(created_variants)} product variants successfully",
         )
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to create product variants: {str(e)}")
+        logger.exception("Failed to create product variants")
+        return ResponseModel(success=False, message="Failed to create product variants")
 
 
 @router.put("/{variant_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
-async def update_product_variant(
+def update_product_variant(
     variant_id: int,
     variant_data: ProductVariantUpdate,
     db: Session = Depends(get_db),
@@ -311,11 +313,12 @@ async def update_product_variant(
             message="Product variant updated successfully",
         )
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to update product variant: {str(e)}")
+        logger.exception("Failed to update product variant")
+        return ResponseModel(success=False, message="Failed to update product variant")
 
 
 @router.delete("/{variant_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
-async def delete_product_variant(
+def delete_product_variant(
     variant_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -331,4 +334,5 @@ async def delete_product_variant(
 
         return ResponseModel(success=True, message="Product variant deleted successfully")
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to delete product variant: {str(e)}")
+        logger.exception("Failed to delete product variant")
+        return ResponseModel(success=False, message="Failed to delete product variant")

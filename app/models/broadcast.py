@@ -6,7 +6,7 @@ from app.database import Base
 class BroadcastHistory(Base):
     __tablename__ = "broadcast_history"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
 
     channel = Column(String(20), index=True, nullable=False)  # sms | telegram
     message = Column(Text, nullable=False)

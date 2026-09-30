@@ -9,11 +9,12 @@ class ClientBase(BaseModel):
     first_name: str = Field(..., min_length=1, max_length=100)
     last_name: str = Field(..., min_length=1, max_length=100)
     phone: Optional[str] = Field(None, max_length=20)
-    telegram_chat_id: Optional[str] = Field(None, max_length=64)
     address: Optional[str] = None
     notes: Optional[str] = None
 
 
+# telegram_chat_id is read-only: only the signed /start link (telegram_link.sync)
+# may set it, otherwise staff could redirect a client's messages to any chat.
 class ClientCreate(ClientBase):
     pass
 
@@ -23,13 +24,13 @@ class ClientUpdate(BaseModel):
     last_name: Optional[str] = Field(None, min_length=1, max_length=100)
     email: Optional[str] = None
     phone: Optional[str] = Field(None, max_length=20)
-    telegram_chat_id: Optional[str] = Field(None, max_length=64)
     address: Optional[str] = None
     notes: Optional[str] = None
 
 
 class ClientResponse(ClientBase):
     id: int
+    telegram_chat_id: Optional[str] = None
     debt_amount: Decimal
     is_active: bool
     created_at: str

@@ -2,7 +2,7 @@ from typing import List, Optional, Tuple
 import asyncio
 import httpx
 
-from sqlalchemy import func
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from app.models.broadcast import BroadcastHistory
@@ -10,6 +10,9 @@ from app.models.client import Client
 from app.config import settings
 from app.services.eskiz_sms import eskiz_client
 from app.services import integration_settings
+
+
+BROADCAST_CONCURRENCY = 20
 
 
 class MarketingService:
@@ -23,35 +26,50 @@ class MarketingService:
             query = query.filter(Client.id.in_(client_ids))
         return query.all()
 
-    async def _send_telegram_message(self, chat_id: str, text: str) -> bool:
-        if not settings.notification.telegram_bot_token:
-            return False
-        url = f"https://api.telegram.org/bot{settings.notification.telegram_bot_token}/sendMessage"
-        async with httpx.AsyncClient(timeout=10) as client:
+    @staticmethod
+    async def _telegram_post(client: httpx.AsyncClient, method: str, **kwargs) -> bool:
+        """POST to the Bot API, waiting out 429 rate limits (retry_after) up to 3 times."""
+        url = f"https://api.telegram.org/bot{settings.notification.telegram_bot_token}/{method}"
+        for _ in range(4):
             try:
-                resp = await client.post(url, json={"chat_id": chat_id, "text": text})
+                resp = await client.post(url, **kwargs)
+            except Exception:
+                return False
+            if resp.status_code == 429:
+                try:
+                    wait = resp.json().get("parameters", {}).get("retry_after", 1)
+                except Exception:
+                    wait = 1
+                await asyncio.sleep(min(float(wait), 30))
+                continue
+            try:
                 return resp.status_code == 200 and resp.json().get("ok", False)
             except Exception:
                 return False
+        return False
+
+    async def _send_telegram_message(
+        self, client: httpx.AsyncClient, chat_id: str, text: str
+    ) -> bool:
+        if not settings.notification.telegram_bot_token:
+            return False
+        return await self._telegram_post(
+            client, "sendMessage", json={"chat_id": chat_id, "text": text}
+        )
 
     async def _send_telegram_photo(
-        self, chat_id: str, caption: str, image: Tuple[str, bytes, str]
+        self, client: httpx.AsyncClient, chat_id: str, caption: str, image: Tuple[str, bytes, str]
     ) -> bool:
         """Send a photo with the message as its caption. `image` is (filename, content, content_type)."""
         if not settings.notification.telegram_bot_token:
             return False
-        url = f"https://api.telegram.org/bot{settings.notification.telegram_bot_token}/sendPhoto"
         filename, content, content_type = image
-        async with httpx.AsyncClient(timeout=30) as client:
-            try:
-                resp = await client.post(
-                    url,
-                    data={"chat_id": chat_id, "caption": caption[:1024]},
-                    files={"photo": (filename, content, content_type)},
-                )
-                return resp.status_code == 200 and resp.json().get("ok", False)
-            except Exception:
-                return False
+        return await self._telegram_post(
+            client,
+            "sendPhoto",
+            data={"chat_id": chat_id, "caption": caption[:1024]},
+            files={"photo": (filename, content, content_type)},
+        )
 
     async def _send_sms_message(self, phone: str, text: str) -> bool:
         if settings.notification.sms_provider == "eskiz" or eskiz_client.is_configured():
@@ -97,11 +115,14 @@ class MarketingService:
 
     def get_stats(self) -> dict:
         """Audience reach plus aggregate delivery counters from past broadcasts."""
-        clients = self.db.query(Client).filter(Client.is_active == True).all()
-
-        sms_reachable = sum(1 for c in clients if c.phone)
-        telegram_reachable = sum(1 for c in clients if c.telegram_chat_id)
-        unreachable = sum(1 for c in clients if not c.phone and not c.telegram_chat_id)
+        has_phone = and_(Client.phone.isnot(None), Client.phone != "")
+        has_tg = and_(Client.telegram_chat_id.isnot(None), Client.telegram_chat_id != "")
+        total_clients, sms_reachable, telegram_reachable, unreachable = self.db.query(
+            func.count(Client.id),
+            func.count(Client.id).filter(has_phone),
+            func.count(Client.id).filter(has_tg),
+            func.count(Client.id).filter(~has_phone, ~has_tg),
+        ).filter(Client.is_active == True).one()
 
         totals = self.db.query(
             func.count(BroadcastHistory.id),
@@ -111,7 +132,7 @@ class MarketingService:
         ).one()
 
         return {
-            "total_clients": len(clients),
+            "total_clients": total_clients,
             "sms_reachable": sms_reachable,
             "telegram_reachable": telegram_reachable,
             "unreachable": unreachable,
@@ -185,30 +206,44 @@ class MarketingService:
         client_ids: List[int] | None,
         image: Optional[Tuple[str, bytes, str]] = None,
     ) -> Tuple[int, dict]:
-        recipients = self._get_recipients(client_ids)
+        recipients = [
+            (c.id, c.telegram_chat_id, c.phone) for c in self._get_recipients(client_ids)
+        ]
         total = len(recipients)
+        # End the read transaction so the pooled connection isn't held idle for
+        # the minutes a large broadcast can take.
+        self.db.commit()
 
         results = {ch: {"attempted": 0, "sent": 0, "failed": 0, "errors": []} for ch in channels}
 
-        tasks: List[asyncio.Task] = []
-        task_metadata: List[tuple] = []  # (channel, index)
+        # Bounded fan-out: thousands of simultaneous sends only earn 429s from
+        # Telegram and exhaust sockets.
+        gate = asyncio.Semaphore(BROADCAST_CONCURRENCY)
 
-        for client in recipients:
-            if "telegram" in channels and client.telegram_chat_id:
-                results["telegram"]["attempted"] += 1
-                if image is not None:
-                    coro = self._send_telegram_photo(client.telegram_chat_id, message, image)
-                else:
-                    coro = self._send_telegram_message(client.telegram_chat_id, message)
-                tasks.append(asyncio.create_task(coro))
-                task_metadata.append(("telegram", client.id))
-            if "sms" in channels and client.phone:
-                results["sms"]["attempted"] += 1
-                tasks.append(asyncio.create_task(self._send_sms_message(client.phone, message)))
-                task_metadata.append(("sms", client.id))
+        async def gated(coro):
+            async with gate:
+                return await coro
 
-        if tasks:
-            outcomes = await asyncio.gather(*tasks, return_exceptions=True)
+        coros = []
+        task_metadata: List[tuple] = []  # (channel, client id)
+
+        async with httpx.AsyncClient(timeout=30) as tg:
+            for client_id, chat_id, phone in recipients:
+                if "telegram" in channels and chat_id:
+                    results["telegram"]["attempted"] += 1
+                    if image is not None:
+                        coro = self._send_telegram_photo(tg, chat_id, message, image)
+                    else:
+                        coro = self._send_telegram_message(tg, chat_id, message)
+                    coros.append(gated(coro))
+                    task_metadata.append(("telegram", client_id))
+                if "sms" in channels and phone:
+                    results["sms"]["attempted"] += 1
+                    coros.append(gated(self._send_sms_message(phone, message)))
+                    task_metadata.append(("sms", client_id))
+
+            outcomes = await asyncio.gather(*coros, return_exceptions=True) if coros else []
+        if coros:
             for (channel, client_id), ok in zip(task_metadata, outcomes):
                 if isinstance(ok, Exception):
                     results[channel]["failed"] += 1

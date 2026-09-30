@@ -15,6 +15,7 @@ PLACEHOLDER_SECRETS = frozenset(
         "your-jwt-secret-key-here",
         "your-refresh-secret-key-here",
         "your-secret-key-here",
+        "your-secure-jwt-secret",  # suggested in DEVELOPMENT.md
     }
 )
 
@@ -138,7 +139,7 @@ class Settings(BaseSettings):
     cors_origin: str = "http://localhost:3001"
     admin_email: str = "admin@enrico.uz"
     admin_username: str = "admin"
-    admin_password: str = "admin123"
+    admin_password: str = "admin123"  # public default: refused in production, see init_db
     # Re-apply admin_password to the existing admin on startup. Off by default so
     # a password changed in the running system survives a restart; turn it on for
     # one boot to recover a lost admin password.

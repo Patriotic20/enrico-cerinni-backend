@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
@@ -7,6 +8,8 @@ from app.schemas.brand import BrandCreate, BrandUpdate, BrandResponse
 from app.api.deps import get_current_user, require_staff
 from app.models.user import User
 from app.schemas.common import ResponseModel
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/brands", tags=["brands"])
 
@@ -36,7 +39,8 @@ def create_brand(
             ),
         )
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to create brand: {str(e)}")
+        logger.exception("Failed to create brand")
+        return ResponseModel(success=False, message="Failed to create brand")
 
 
 @router.get("", response_model=ResponseModel)
@@ -65,7 +69,8 @@ def get_brands(
             ],
         )
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to fetch brands: {str(e)}")
+        logger.exception("Failed to fetch brands")
+        return ResponseModel(success=False, message="Failed to fetch brands")
 
 
 @router.get("/{brand_id}", response_model=ResponseModel)
@@ -93,7 +98,8 @@ def get_brand(
             ),
         )
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to fetch brand: {str(e)}")
+        logger.exception("Failed to fetch brand")
+        return ResponseModel(success=False, message="Failed to fetch brand")
 
 
 @router.put("/{brand_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
@@ -127,7 +133,8 @@ def update_brand(
             ),
         )
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to update brand: {str(e)}")
+        logger.exception("Failed to update brand")
+        return ResponseModel(success=False, message="Failed to update brand")
 
 
 @router.delete("/{brand_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
@@ -146,4 +153,5 @@ def delete_brand(
         db.commit()
         return ResponseModel(success=True, message="Brand deleted successfully")
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to delete brand: {str(e)}")
+        logger.exception("Failed to delete brand")
+        return ResponseModel(success=False, message="Failed to delete brand")

@@ -12,14 +12,14 @@ from app.schemas.product import (
 )
 from app.schemas.product_variant import ProductVariantResponse
 from app.schemas.common import ResponseModel, PaginatedResponse
-from app.api.deps import get_current_active_user, require_staff
+from app.api.deps import get_current_active_user, require_staff, is_staff
 from app.models.user import User
 
 router = APIRouter(prefix="/products", tags=["Products"])
 
 
 @router.get("/barcode/{barcode}", response_model=ResponseModel)
-async def scan_barcode(
+def scan_barcode(
     barcode: str,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_active_user),
@@ -40,7 +40,7 @@ async def scan_barcode(
                 'size_id': variant.size_id,
                 'sku': variant.sku,
                 'price': float(variant.price),
-                'cost_price': float(variant.cost_price) if variant.cost_price is not None else None,
+                'cost_price': float(variant.cost_price) if variant.cost_price is not None and is_staff(current_user) else None,
                 'stock_quantity': variant.stock_quantity,
                 'min_stock_level': variant.min_stock_level,
                 'is_active': variant.is_active,
@@ -69,7 +69,7 @@ async def scan_barcode(
     ))
 
 @router.get("/", response_model=ResponseModel)
-async def get_products(
+def get_products(
     name: Optional[str] = Query(None, description="Filter by product name"),
     brand_id: Optional[int] = Query(None, description="Filter by brand ID"),
     season_id: Optional[int] = Query(None, description="Filter by season ID"),
@@ -78,7 +78,7 @@ async def get_products(
         None, description="Search by name, brand, or description"
     ),
     page: int = Query(1, ge=1, description="Page number"),
-    size: int = Query(10, ge=1, le=1000, description="Page size"),
+    size: int = Query(10, ge=1, le=100, description="Page size"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -108,7 +108,7 @@ async def get_products(
                     'size_id': variant.size_id,
                     'sku': variant.sku,
                     'price': float(variant.price),
-                    'cost_price': float(variant.cost_price) if variant.cost_price is not None else None,
+                    'cost_price': float(variant.cost_price) if variant.cost_price is not None and is_staff(current_user) else None,
                     'stock_quantity': variant.stock_quantity,
                     'min_stock_level': variant.min_stock_level,
                     'is_active': variant.is_active,
@@ -148,7 +148,7 @@ async def get_products(
 
 
 @router.get("/{product_id}", response_model=ResponseModel)
-async def get_product(
+def get_product(
     product_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -171,7 +171,7 @@ async def get_product(
                 'size_id': variant.size_id,
                 'sku': variant.sku,
                 'price': float(variant.price),
-                'cost_price': float(variant.cost_price) if variant.cost_price is not None else None,
+                'cost_price': float(variant.cost_price) if variant.cost_price is not None and is_staff(current_user) else None,
                 'stock_quantity': variant.stock_quantity,
                 'min_stock_level': variant.min_stock_level,
                 'is_active': variant.is_active,
@@ -205,7 +205,7 @@ async def get_product(
 
 
 @router.post("/", response_model=ResponseModel, dependencies=[Depends(require_staff)])
-async def create_product(
+def create_product(
     product_data: ProductCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
@@ -240,7 +240,7 @@ async def create_product(
 
 
 @router.put("/{product_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
-async def update_product(
+def update_product(
     product_id: int,
     product_data: ProductUpdate,
     db: Session = Depends(get_db),
@@ -275,7 +275,7 @@ async def update_product(
 
 
 @router.delete("/{product_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
-async def delete_product(
+def delete_product(
     product_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),

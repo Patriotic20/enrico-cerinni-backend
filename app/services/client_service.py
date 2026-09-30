@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, func, case
+from sqlalchemy import or_, func, case, select
 from typing import List, Optional, Tuple
 from decimal import Decimal
 from app.models.client import Client
@@ -62,24 +62,22 @@ class ClientService:
 
         # Most recent sale per client, for the "last purchase" column and the
         # active-clients card. Cancelled sales do not count as a purchase.
-        last_purchase_subq = (
-            self.db.query(
-                Sale.client_id.label("client_id"),
-                func.max(Sale.created_at).label("last_purchase"),
-            )
-            .filter(Sale.status != "cancelled")
-            .group_by(Sale.client_id)
-            .subquery()
+        # Correlated, so Postgres evaluates it only for the rows on the page
+        # instead of grouping the whole sales table on every request.
+        last_purchase = (
+            select(func.max(Sale.created_at))
+            .where(Sale.client_id == Client.id, Sale.status != "cancelled")
+            .correlate(Client)
+            .scalar_subquery()
         )
 
         query = (
             self.db.query(
                 Client,
                 debt_expr.label("debt"),
-                last_purchase_subq.c.last_purchase.label("last_purchase"),
+                last_purchase.label("last_purchase"),
             )
             .outerjoin(debt_subq, debt_subq.c.client_id == Client.id)
-            .outerjoin(last_purchase_subq, last_purchase_subq.c.client_id == Client.id)
         )
 
         # Apply filters
@@ -130,7 +128,8 @@ class ClientService:
                 )
             )
 
-        total = query.count()
+        # Count without the per-row last-purchase subquery and the ordering.
+        total = query.with_entities(func.count(Client.id)).order_by(None).scalar()
 
         query = paginate_query(query, filters.page, filters.size)
 
@@ -220,30 +219,6 @@ class ClientService:
         self.db.commit()
         self.db.refresh(client)
         return client
-
-    def search_clients(
-        self, search_term: str, page: int = 1, size: int = 10
-    ) -> Tuple[List[Client], dict]:
-        """Search clients by name, email, or phone."""
-        query = self.db.query(Client).filter(
-            or_(
-                Client.first_name.ilike(f"%{search_term}%"),
-                Client.last_name.ilike(f"%{search_term}%"),
-                Client.email.ilike(f"%{search_term}%"),
-                Client.phone.ilike(f"%{search_term}%"),
-            )
-        )
-
-        total = query.count()
-        query = paginate_query(query, page, size)
-        clients = query.all()
-
-        pagination = calculate_pagination_info(total, page, size)
-        return clients, pagination
-
-    def get_clients_with_debt(self) -> List[Client]:
-        """Get all clients with outstanding debt."""
-        return self.db.query(Client).filter(Client.debt_amount > 0).all()
 
     def get_insights(self) -> List[dict]:
         """Per-client purchase metrics for every client, for segmentation.

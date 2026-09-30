@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
@@ -7,6 +8,8 @@ from app.schemas.season import SeasonCreate, SeasonUpdate, SeasonResponse
 from app.api.deps import get_current_user, require_staff
 from app.models.user import User
 from app.schemas.common import ResponseModel
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/seasons", tags=["seasons"])
 
@@ -37,7 +40,8 @@ def create_season(
             ),
         )
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to create season: {str(e)}")
+        logger.exception("Failed to create season")
+        return ResponseModel(success=False, message="Failed to create season")
 
 
 @router.get("", response_model=ResponseModel)
@@ -65,7 +69,8 @@ def get_seasons(
             ],
         )
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to fetch seasons: {str(e)}")
+        logger.exception("Failed to fetch seasons")
+        return ResponseModel(success=False, message="Failed to fetch seasons")
 
 
 @router.get("/{season_id}", response_model=ResponseModel)
@@ -92,7 +97,8 @@ def get_season(
             ),
         )
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to fetch season: {str(e)}")
+        logger.exception("Failed to fetch season")
+        return ResponseModel(success=False, message="Failed to fetch season")
 
 
 @router.put("/{season_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
@@ -125,7 +131,8 @@ def update_season(
             ),
         )
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to update season: {str(e)}")
+        logger.exception("Failed to update season")
+        return ResponseModel(success=False, message="Failed to update season")
 
 
 @router.delete("/{season_id}", response_model=ResponseModel, dependencies=[Depends(require_staff)])
@@ -144,4 +151,5 @@ def delete_season(
         db.commit()
         return ResponseModel(success=True, message="Season deleted successfully")
     except Exception as e:
-        return ResponseModel(success=False, message=f"Failed to delete season: {str(e)}")
+        logger.exception("Failed to delete season")
+        return ResponseModel(success=False, message="Failed to delete season")

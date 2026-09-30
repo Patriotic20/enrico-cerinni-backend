@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, case, and_
 from typing import List, Dict, Any, Optional
 from decimal import Decimal
 from datetime import datetime, timedelta
@@ -28,12 +28,28 @@ OUTFLOW_TYPES = (
 )
 
 
+# Module level: a service instance lives for one request, so a per-instance
+# cache never hit. ponytail: per worker process; move to Redis if it matters.
+_CACHE: Dict[str, Any] = {}
+
+# Chart bucket width per interval; buckets start at the period's start_date.
+_STEP = {"day": timedelta(days=1), "week": timedelta(weeks=1), "month": timedelta(days=30)}
+
+
+def _label(interval: str, i: int, bucket_start: datetime) -> str:
+    if interval == "day":
+        return bucket_start.strftime("%d/%m")
+    if interval == "week":
+        return f"Hafta {i+1}"
+    return bucket_start.strftime("%b")
+
+
 class DashboardService:
     def __init__(self, db: Session):
         self.db = db
         self.product_service = ProductService(db)
         self.sale_service = SaleService(db)
-        self._cache = {}
+        self._cache = _CACHE
         self._cache_ttl = 300  # 5 minutes cache
 
     def _get_cache_key(self, method_name: str, **kwargs) -> str:
@@ -47,8 +63,7 @@ class DashboardService:
             data, timestamp = self._cache[cache_key]
             if datetime.now().timestamp() - timestamp < self._cache_ttl:
                 return data
-            else:
-                del self._cache[cache_key]
+            self._cache.pop(cache_key, None)
         return None
 
     def _set_cache_data(self, cache_key: str, data: Any) -> None:
@@ -70,12 +85,11 @@ class DashboardService:
         ).scalar() or Decimal("0")
 
         # Low stock product variants
-        low_stock_variants = (
+        low_stock_count = (
             self.db.query(ProductVariant)
             .filter(ProductVariant.stock_quantity <= ProductVariant.min_stock_level)
-            .all()
+            .count()
         )
-        low_stock_count = len(low_stock_variants)
 
         # Recent sales (last 7 days)
         week_ago = datetime.now() - timedelta(days=7)
@@ -101,25 +115,33 @@ class DashboardService:
                 }
             )
 
-        # Monthly revenue (last 6 months)
-        monthly_revenue = []
+        # Monthly revenue (last 6 months), one grouped query.
+        months = []
         for i in range(6):
             month_start = datetime.now().replace(day=1) - timedelta(days=30 * i)
             month_end = month_start.replace(day=28) + timedelta(days=4)
             month_end = month_end.replace(day=1) - timedelta(days=1)
-
-            month_revenue = self.db.query(func.sum(Sale.total_amount)).filter(
-                Sale.status == SaleStatus.COMPLETED,
-                Sale.created_at >= month_start,
-                Sale.created_at <= month_end,
-            ).scalar() or Decimal("0")
-
-            monthly_revenue.append(
-                {
-                    "month": month_start.strftime("%B %Y"),
-                    "revenue": float(month_revenue),
-                }
-            )
+            months.append((month_start, month_end))
+        bucket = case(
+            *[
+                (and_(Sale.created_at >= ms, Sale.created_at <= me), i)
+                for i, (ms, me) in enumerate(months)
+            ],
+            else_=None,
+        ).label("bucket")
+        revenue_by_month = dict(
+            self.db.query(bucket, func.sum(Sale.total_amount))
+            .filter(Sale.status == SaleStatus.COMPLETED, bucket.isnot(None))
+            .group_by(bucket)
+            .all()
+        )
+        monthly_revenue = [
+            {
+                "month": ms.strftime("%B %Y"),
+                "revenue": float(revenue_by_month.get(i) or 0),
+            }
+            for i, (ms, _) in enumerate(months)
+        ]
 
         # Top products by sales
         top_products = (
@@ -287,96 +309,58 @@ class DashboardService:
             
         return start_date, now, periods, interval
 
+    def _bucketed(self, time_col, start, interval, periods, *aggregates, filters=()):
+        """{bucket index: aggregate row} in one grouped query (was 1-2 queries per bucket)."""
+        step = _STEP[interval]
+        k = func.floor(
+            func.extract("epoch", time_col - start) / step.total_seconds()
+        ).label("k")
+        rows = (
+            self.db.query(k, *aggregates)
+            .filter(*filters, time_col >= start, time_col < start + step * periods)
+            .group_by(k)
+            .all()
+        )
+        return {int(r[0]): tuple(r[1:]) for r in rows}
+
+    def _completed_sales_by_bucket(self, start, interval, periods):
+        """{bucket: (revenue, order count)} for completed sales."""
+        return self._bucketed(
+            Sale.created_at, start, interval, periods,
+            func.coalesce(func.sum(Sale.total_amount), 0), func.count(Sale.id),
+            filters=(Sale.status == SaleStatus.COMPLETED,),
+        )
+
+    def _buckets(self, start, interval, periods):
+        step = _STEP[interval]
+        return [(i, _label(interval, i, start + step * i)) for i in range(periods)]
+
     def get_cashflow_data(self, period: str = "1month") -> List[Dict[str, Any]]:
         """Get cashflow data for charts."""
         cache_key = self._get_cache_key("get_cashflow_data", period=period)
         cached_data = self._get_cached_data(cache_key)
         if cached_data is not None:
             return cached_data
-            
+
         start_date, end_date, periods, interval = self._get_period_dates(period)
-        
-        # Generate data points based on interval
+        income_by = self._completed_sales_by_bucket(start_date, interval, periods)
+        expense_by = self._bucketed(
+            Transaction.created_at, start_date, interval, periods,
+            func.coalesce(func.sum(func.abs(Transaction.amount)), 0),
+            filters=(Transaction.transaction_type.in_(OUTFLOW_TYPES),),
+        )
+
         data = []
-        
-        if interval == "day":
-            for i in range(periods):
-                day_start = start_date + timedelta(days=i)
-                day_end = day_start + timedelta(days=1)
-                
-                # Income from sales
-                income = self.db.query(func.sum(Sale.total_amount)).filter(
-                    Sale.status == SaleStatus.COMPLETED,
-                    Sale.created_at >= day_start,
-                    Sale.created_at < day_end
-                ).scalar() or Decimal("0")
-                
-                # Expenses from transactions
-                expenses = self.db.query(func.sum(func.abs(Transaction.amount))).filter(
-                    Transaction.transaction_type.in_(OUTFLOW_TYPES),
-                    Transaction.created_at >= day_start,
-                    Transaction.created_at < day_end
-                ).scalar() or Decimal("0")
-                
-                data.append({
-                    "month": day_start.strftime("%d/%m"),
-                    "income": float(income),
-                    "expenses": float(expenses),
-                    "netFlow": float(income - expenses)
-                })
-                
-        elif interval == "week":
-            for i in range(periods):
-                week_start = start_date + timedelta(weeks=i)
-                week_end = week_start + timedelta(weeks=1)
-                
-                # Income from sales
-                income = self.db.query(func.sum(Sale.total_amount)).filter(
-                    Sale.status == SaleStatus.COMPLETED,
-                    Sale.created_at >= week_start,
-                    Sale.created_at < week_end
-                ).scalar() or Decimal("0")
-                
-                # Expenses from transactions
-                expenses = self.db.query(func.sum(func.abs(Transaction.amount))).filter(
-                    Transaction.transaction_type.in_(OUTFLOW_TYPES),
-                    Transaction.created_at >= week_start,
-                    Transaction.created_at < week_end
-                ).scalar() or Decimal("0")
-                
-                data.append({
-                    "month": f"Hafta {i+1}",
-                    "income": float(income),
-                    "expenses": float(expenses),
-                    "netFlow": float(income - expenses)
-                })
-                
-        else:  # month interval
-            for i in range(periods):
-                month_start = start_date + timedelta(days=30*i)
-                month_end = month_start + timedelta(days=30)
-                
-                # Income from sales
-                income = self.db.query(func.sum(Sale.total_amount)).filter(
-                    Sale.status == SaleStatus.COMPLETED,
-                    Sale.created_at >= month_start,
-                    Sale.created_at < month_end
-                ).scalar() or Decimal("0")
-                
-                # Expenses from transactions
-                expenses = self.db.query(func.sum(func.abs(Transaction.amount))).filter(
-                    Transaction.transaction_type.in_(OUTFLOW_TYPES),
-                    Transaction.created_at >= month_start,
-                    Transaction.created_at < month_end
-                ).scalar() or Decimal("0")
-                
-                data.append({
-                    "month": month_start.strftime("%b"),
-                    "income": float(income),
-                    "expenses": float(expenses),
-                    "netFlow": float(income - expenses)
-                })
-        
+        for i, label in self._buckets(start_date, interval, periods):
+            income = income_by.get(i, (Decimal("0"), 0))[0]
+            expenses = expense_by.get(i, (Decimal("0"),))[0]
+            data.append({
+                "month": label,
+                "income": float(income),
+                "expenses": float(expenses),
+                "netFlow": float(income - expenses)
+            })
+
         self._set_cache_data(cache_key, data)
         return data
 
@@ -386,82 +370,25 @@ class DashboardService:
         cached_data = self._get_cached_data(cache_key)
         if cached_data is not None:
             return cached_data
-            
+
         start_date, end_date, periods, interval = self._get_period_dates(period)
-        
+        revenue_by = self._completed_sales_by_bucket(start_date, interval, periods)
+
         data = []
-        
-        if interval == "day":
-            for i in range(periods):
-                day_start = start_date + timedelta(days=i)
-                day_end = day_start + timedelta(days=1)
-                
-                # Revenue from sales
-                revenue = self.db.query(func.sum(Sale.total_amount)).filter(
-                    Sale.status == SaleStatus.COMPLETED,
-                    Sale.created_at >= day_start,
-                    Sale.created_at < day_end
-                ).scalar() or Decimal("0")
-                
-                # Cost estimation (60% of revenue as default)
-                cost = revenue * Decimal("0.6")
-                profit = revenue - cost
-                margin = (profit / revenue * 100) if revenue > 0 else 0
-                
-                data.append({
-                    "month": day_start.strftime("%d/%m"),
-                    "revenue": float(revenue),
-                    "cost": float(cost),
-                    "profit": float(profit),
-                    "margin": float(margin)
-                })
-                
-        elif interval == "week":
-            for i in range(periods):
-                week_start = start_date + timedelta(weeks=i)
-                week_end = week_start + timedelta(weeks=1)
-                
-                revenue = self.db.query(func.sum(Sale.total_amount)).filter(
-                    Sale.status == SaleStatus.COMPLETED,
-                    Sale.created_at >= week_start,
-                    Sale.created_at < week_end
-                ).scalar() or Decimal("0")
-                
-                cost = revenue * Decimal("0.6")
-                profit = revenue - cost
-                margin = (profit / revenue * 100) if revenue > 0 else 0
-                
-                data.append({
-                    "month": f"Hafta {i+1}",
-                    "revenue": float(revenue),
-                    "cost": float(cost),
-                    "profit": float(profit),
-                    "margin": float(margin)
-                })
-                
-        else:  # month interval
-            for i in range(periods):
-                month_start = start_date + timedelta(days=30*i)
-                month_end = month_start + timedelta(days=30)
-                
-                revenue = self.db.query(func.sum(Sale.total_amount)).filter(
-                    Sale.status == SaleStatus.COMPLETED,
-                    Sale.created_at >= month_start,
-                    Sale.created_at < month_end
-                ).scalar() or Decimal("0")
-                
-                cost = revenue * Decimal("0.6")
-                profit = revenue - cost
-                margin = (profit / revenue * 100) if revenue > 0 else 0
-                
-                data.append({
-                    "month": month_start.strftime("%b"),
-                    "revenue": float(revenue),
-                    "cost": float(cost),
-                    "profit": float(profit),
-                    "margin": float(margin)
-                })
-        
+        for i, label in self._buckets(start_date, interval, periods):
+            revenue = revenue_by.get(i, (Decimal("0"), 0))[0]
+            # Cost estimation (60% of revenue as default)
+            cost = revenue * Decimal("0.6")
+            profit = revenue - cost
+            margin = (profit / revenue * 100) if revenue > 0 else 0
+            data.append({
+                "month": label,
+                "revenue": float(revenue),
+                "cost": float(cost),
+                "profit": float(profit),
+                "margin": float(margin)
+            })
+
         self._set_cache_data(cache_key, data)
         return data
 
@@ -471,112 +398,27 @@ class DashboardService:
         cached_data = self._get_cached_data(cache_key)
         if cached_data is not None:
             return cached_data
-            
+
         start_date, end_date, periods, interval = self._get_period_dates(period)
-        
+        sales_by = self._completed_sales_by_bucket(start_date, interval, periods)
+
         data = []
         previous_sales = 0
-        
-        if interval == "day":
-            for i in range(periods):
-                day_start = start_date + timedelta(days=i)
-                day_end = day_start + timedelta(days=1)
-                
-                # Sales amount
-                sales = self.db.query(func.sum(Sale.total_amount)).filter(
-                    Sale.status == SaleStatus.COMPLETED,
-                    Sale.created_at >= day_start,
-                    Sale.created_at < day_end
-                ).scalar() or Decimal("0")
-                
-                # Number of orders
-                orders = self.db.query(Sale).filter(
-                    Sale.status == SaleStatus.COMPLETED,
-                    Sale.created_at >= day_start,
-                    Sale.created_at < day_end
-                ).count()
-                
-                # Average order value
-                avg_order = (sales / orders) if orders > 0 else 0
-                
-                # Growth calculation
-                growth = 0
-                if previous_sales > 0:
-                    growth = ((float(sales) - previous_sales) / previous_sales) * 100
-                previous_sales = float(sales)
-                
-                data.append({
-                    "month": day_start.strftime("%d/%m"),
-                    "sales": float(sales),
-                    "orders": orders,
-                    "avgOrder": float(avg_order),
-                    "growth": growth
-                })
-                
-        elif interval == "week":
-            for i in range(periods):
-                week_start = start_date + timedelta(weeks=i)
-                week_end = week_start + timedelta(weeks=1)
-                
-                sales = self.db.query(func.sum(Sale.total_amount)).filter(
-                    Sale.status == SaleStatus.COMPLETED,
-                    Sale.created_at >= week_start,
-                    Sale.created_at < week_end
-                ).scalar() or Decimal("0")
-                
-                orders = self.db.query(Sale).filter(
-                    Sale.status == SaleStatus.COMPLETED,
-                    Sale.created_at >= week_start,
-                    Sale.created_at < week_end
-                ).count()
-                
-                avg_order = (sales / orders) if orders > 0 else 0
-                
-                growth = 0
-                if previous_sales > 0:
-                    growth = ((float(sales) - previous_sales) / previous_sales) * 100
-                previous_sales = float(sales)
-                
-                data.append({
-                    "month": f"Hafta {i+1}",
-                    "sales": float(sales),
-                    "orders": orders,
-                    "avgOrder": float(avg_order),
-                    "growth": growth
-                })
-                
-        else:  # month interval
-            for i in range(periods):
-                month_start = start_date + timedelta(days=30*i)
-                month_end = month_start + timedelta(days=30)
-                
-                sales = self.db.query(func.sum(Sale.total_amount)).filter(
-                    Sale.status == SaleStatus.COMPLETED,
-                    Sale.created_at >= month_start,
-                    Sale.created_at < month_end
-                ).scalar() or Decimal("0")
-                
-                orders = self.db.query(Sale).filter(
-                    Sale.status == SaleStatus.COMPLETED,
-                    Sale.created_at >= month_start,
-                    Sale.created_at < month_end
-                ).count()
-                
-                avg_order = (sales / orders) if orders > 0 else 0
-                
-                growth = 0
-                if previous_sales > 0:
-                    growth = ((float(sales) - previous_sales) / previous_sales) * 100
-                previous_sales = float(sales)
-                
-                data.append({
-                    "month": month_start.strftime("%b"),
-                    "sales": float(sales),
-                    "orders": orders,
-                    "avgOrder": float(avg_order),
-                    "growth": growth
-                })
-        
+        for i, label in self._buckets(start_date, interval, periods):
+            sales, orders = sales_by.get(i, (Decimal("0"), 0))
+            avg_order = (sales / orders) if orders > 0 else 0
+            growth = 0
+            if previous_sales > 0:
+                growth = ((float(sales) - previous_sales) / previous_sales) * 100
+            previous_sales = float(sales)
+            data.append({
+                "month": label,
+                "sales": float(sales),
+                "orders": orders,
+                "avgOrder": float(avg_order),
+                "growth": growth
+            })
+
         self._set_cache_data(cache_key, data)
         return data
 
@@ -597,7 +439,7 @@ class DashboardService:
             Transaction.transaction_type.in_(OUTFLOW_TYPES),
             Transaction.created_at >= start_date,
             Transaction.created_at <= end_date
-        ).group_by(Transaction.description).all()
+        ).group_by(Transaction.description).order_by(desc("total_amount")).limit(10).all()
         
         # Define colors for different expense categories
         colors = [
@@ -606,7 +448,7 @@ class DashboardService:
         ]
         
         data = []
-        for i, expense in enumerate(expense_data[:10]):  # Limit to top 10 expenses
+        for i, expense in enumerate(expense_data):
             data.append({
                 "name": expense.description or "Boshqa xarajatlar",
                 "value": float(expense.total_amount),

@@ -7,7 +7,7 @@ from app.database import Base
 class SalaryPayment(Base):
     __tablename__ = "salary_payments"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False)
     amount = Column(Numeric(14, 2), nullable=False)
     payment_date = Column(DateTime(timezone=True), nullable=False)
