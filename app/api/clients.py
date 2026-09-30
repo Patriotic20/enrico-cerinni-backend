@@ -226,7 +226,9 @@ def update_client_debt(
 ):
     """Update client debt amount."""
     client_service = ClientService(db)
-    client = client_service.update_client_debt(client_id, debt_data.debt_amount)
+    client = client_service.update_client_debt(
+        client_id, debt_amount=debt_data.debt_amount, add_amount=debt_data.add_amount
+    )
 
     if not client:
         return ResponseModel(success=False, message="Client not found")

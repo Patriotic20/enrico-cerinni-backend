@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, model_validator
 from typing import Optional, List
 from decimal import Decimal
 from app.schemas.common import PaginationModel
@@ -41,7 +41,16 @@ class ClientResponse(ClientBase):
 
 
 class ClientDebtUpdate(BaseModel):
-    debt_amount: Decimal = Field(..., ge=0)
+    # Exactly one: debt_amount sets the total, add_amount adds to the current
+    # total server-side (no lost update when two people add debt at once).
+    debt_amount: Optional[Decimal] = Field(None, ge=0)
+    add_amount: Optional[Decimal] = Field(None, gt=0)
+
+    @model_validator(mode="after")
+    def one_of(self):
+        if (self.debt_amount is None) == (self.add_amount is None):
+            raise ValueError("Provide exactly one of debt_amount or add_amount")
+        return self
 
 
 class ClientFilter(BaseModel):

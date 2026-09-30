@@ -199,7 +199,8 @@ class ClientService:
         return Decimal(total or 0)
 
     def update_client_debt(
-        self, client_id: int, debt_amount: Decimal
+        self, client_id: int, debt_amount: Optional[Decimal] = None,
+        add_amount: Optional[Decimal] = None,
     ) -> Optional[Client]:
         """Set a client's total outstanding debt.
 
@@ -208,12 +209,19 @@ class ClientService:
         adjustment — writing the total straight into debt_amount used to leave
         the debts list unchanged, because that list reads the sales instead.
         """
-        client = self.get_client(client_id)
+        # Row lock: concurrent adjustments serialize instead of overwriting.
+        client = (
+            self.db.query(Client).filter(Client.id == client_id).with_for_update().first()
+        )
         if not client:
             return None
 
-        target = Decimal(debt_amount)
-        client.manual_debt_adjustment = target - self.sale_derived_debt(client_id)
+        sale_debt = self.sale_derived_debt(client_id)
+        if add_amount is not None:
+            target = sale_debt + Decimal(client.manual_debt_adjustment or 0) + Decimal(add_amount)
+        else:
+            target = Decimal(debt_amount)
+        client.manual_debt_adjustment = target - sale_debt
         # Kept in step so anything still reading the column sees the same total.
         client.debt_amount = target
         self.db.commit()
