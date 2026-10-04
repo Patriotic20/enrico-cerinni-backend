@@ -12,6 +12,7 @@ from app.models.client import Client
 from app.models.sale import Sale, SaleStatus, SaleItem
 from app.models.transaction import Transaction, TransactionType
 from app.models.expense import Expense
+from app.models.salary_payment import SalaryPayment
 from app.services.product_service import ProductService
 from app.services.sale_service import SaleService
 
@@ -285,41 +286,41 @@ class DashboardService:
         now = datetime.now()
         
         if period == "1week":
-            start_date = now - timedelta(days=7)
             periods = 7
             interval = "day"
         elif period == "1month":
-            start_date = now - timedelta(days=30)
-            periods = 7
+            periods = 4
             interval = "week"
         elif period == "3months":
-            start_date = now - timedelta(days=90)
             periods = 12
             interval = "week"
         elif period == "6months":
-            start_date = now - timedelta(days=180)
             periods = 6
             interval = "month"
         elif period == "1year":
-            start_date = now - timedelta(days=365)
             periods = 12
             interval = "month"
         else:
             # Default to 1 month
-            start_date = now - timedelta(days=30)
-            periods = 7
+            periods = 4
             interval = "week"
-            
+
+        # Buckets must end exactly at now: 12 x 30-day buckets from now-365d
+        # stopped 5 days short and dropped the latest sales from every chart.
+        start_date = now - _STEP[interval] * periods
         return start_date, now, periods, interval
 
-    def _bucketed(self, time_col, start, interval, periods, *aggregates, filters=()):
+    def _bucketed(self, time_col, start, interval, periods, *aggregates, filters=(), joins=()):
         """{bucket index: aggregate row} in one grouped query (was 1-2 queries per bucket)."""
         step = _STEP[interval]
         k = func.floor(
             func.extract("epoch", time_col - start) / step.total_seconds()
         ).label("k")
+        query = self.db.query(k, *aggregates)
+        for j in joins:
+            query = query.join(*j)
         rows = (
-            self.db.query(k, *aggregates)
+            query
             .filter(*filters, time_col >= start, time_col < start + step * periods)
             .group_by(k)
             .all()
@@ -376,12 +377,32 @@ class DashboardService:
 
         start_date, end_date, periods, interval = self._get_period_dates(period)
         revenue_by = self._completed_sales_by_bucket(start_date, interval, periods)
+        # Cost = what the sold goods cost (variant cost_price) + expenses + salaries.
+        # ponytail: stock purchases are left out — counting them on top of the cost
+        # of goods sold would charge the same goods twice. No cost_price = no cost.
+        cogs_by = self._bucketed(
+            Sale.created_at, start_date, interval, periods,
+            func.coalesce(func.sum(SaleItem.quantity * func.coalesce(ProductVariant.cost_price, 0)), 0),
+            filters=(Sale.status == SaleStatus.COMPLETED,),
+            joins=((SaleItem, SaleItem.sale_id == Sale.id),
+                   (ProductVariant, ProductVariant.id == SaleItem.product_variant_id)),
+        )
+        expense_by = self._bucketed(
+            Expense.date, start_date, interval, periods,
+            func.coalesce(func.sum(Expense.amount), 0),
+        )
+        salary_by = self._bucketed(
+            SalaryPayment.payment_date, start_date, interval, periods,
+            func.coalesce(func.sum(SalaryPayment.amount), 0),
+        )
 
         data = []
         for i, label in self._buckets(start_date, interval, periods):
             revenue = revenue_by.get(i, (Decimal("0"), 0))[0]
-            # Cost estimation (60% of revenue as default)
-            cost = revenue * Decimal("0.6")
+            cost = sum(
+                (src.get(i, (Decimal("0"),))[0] for src in (cogs_by, expense_by, salary_by)),
+                Decimal("0"),
+            )
             profit = revenue - cost
             margin = (profit / revenue * 100) if revenue > 0 else 0
             data.append({
