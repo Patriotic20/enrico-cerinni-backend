@@ -397,16 +397,18 @@ class DashboardService:
         data = []
         for i, label in self._buckets(start_date, interval, periods):
             revenue = revenue_by.get(i, (Decimal("0"), 0))[0]
-            cost = sum(
-                (src.get(i, (Decimal("0"),))[0] for src in (cogs_by, expense_by, salary_by)),
-                Decimal("0"),
-            )
+            # Factory price of goods sold is kept apart from operating expenses.
+            cost_of_goods = cogs_by.get(i, (Decimal("0"),))[0]
+            expenses = expense_by.get(i, (Decimal("0"),))[0] + salary_by.get(i, (Decimal("0"),))[0]
+            cost = cost_of_goods + expenses
             profit = revenue - cost
             margin = (profit / revenue * 100) if revenue > 0 else 0
             data.append({
                 "month": label,
                 "revenue": float(revenue),
                 "cost": float(cost),
+                "cost_of_goods": float(cost_of_goods),
+                "expenses": float(expenses),
                 "profit": float(profit),
                 "margin": float(margin)
             })
