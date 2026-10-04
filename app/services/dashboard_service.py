@@ -13,6 +13,7 @@ from app.models.sale import Sale, SaleStatus, SaleItem
 from app.models.transaction import Transaction, TransactionType
 from app.models.expense import Expense
 from app.models.salary_payment import SalaryPayment
+from app.services.expense_totals import expense_total, expense_totals_by_category
 from app.services.product_service import ProductService
 from app.services.sale_service import SaleService
 
@@ -186,12 +187,9 @@ class DashboardService:
         # Total orders count (all completed sales)
         total_orders = total_sales
 
-        # Monthly expenses (basic calculation)
-        month_ago = datetime.now() - timedelta(days=30)
-        monthly_expenses = self.db.query(func.sum(func.abs(Transaction.amount))).filter(
-            Transaction.transaction_type.in_(OUTFLOW_TYPES),
-            Transaction.created_at >= month_ago
-        ).scalar() or Decimal("0")
+        # Same sources as the finance page: expense rows, salaries, stock purchases.
+        # Refunds are not expenses — the cancelled sale already left revenue.
+        monthly_expenses = expense_total(self.db, datetime.now() - timedelta(days=30))
 
         return {
             "total_products": total_products,
@@ -455,16 +453,11 @@ class DashboardService:
             
         start_date, end_date, periods, interval = self._get_period_dates(period)
         
-        # Get expenses by category (using transaction descriptions as categories)
-        expense_data = self.db.query(
-            Transaction.description,
-            func.sum(func.abs(Transaction.amount)).label("total_amount")
-        ).filter(
-            Transaction.transaction_type.in_(OUTFLOW_TYPES),
-            Transaction.created_at >= start_date,
-            Transaction.created_at <= end_date
-        ).group_by(Transaction.description).order_by(desc("total_amount")).limit(10).all()
-        
+        totals = expense_totals_by_category(self.db, start_date, end_date)
+        expense_data = sorted(
+            ((k, v) for k, v in totals.items() if v), key=lambda kv: kv[1], reverse=True
+        )
+
         # Define colors for different expense categories
         colors = [
             "#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", 
@@ -472,10 +465,10 @@ class DashboardService:
         ]
         
         data = []
-        for i, expense in enumerate(expense_data):
+        for i, (category, amount) in enumerate(expense_data):
             data.append({
-                "name": expense.description or "Boshqa xarajatlar",
-                "value": float(expense.total_amount),
+                "name": category,  # category key; the chart maps it to a label
+                "value": float(amount),
                 "color": colors[i % len(colors)]
             })
         
