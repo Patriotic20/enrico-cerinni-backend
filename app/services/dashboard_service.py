@@ -5,7 +5,8 @@ from decimal import Decimal
 from datetime import datetime, timedelta
 import hashlib
 import json
-from app.models.product import Product
+from app.models.product import Product, display_name
+from app.models.brand import Brand
 from app.models.product_variant import ProductVariant
 from app.models.client import Client
 from app.models.sale import Sale, SaleStatus, SaleItem
@@ -147,14 +148,16 @@ class DashboardService:
         top_products = (
             self.db.query(
                 Product.name,
+                Brand.name.label("brand_name"),
                 func.sum(SaleItem.quantity).label("total_sold"),
                 func.sum(SaleItem.total_price).label("total_revenue"),
             )
             .join(ProductVariant, ProductVariant.product_id == Product.id)
             .join(SaleItem, SaleItem.product_variant_id == ProductVariant.id)
             .join(Sale, Sale.id == SaleItem.sale_id)
+            .outerjoin(Brand, Product.brand_id == Brand.id)
             .filter(Sale.status == SaleStatus.COMPLETED)
-            .group_by(Product.id, Product.name)
+            .group_by(Product.id, Product.name, Brand.name)
             .order_by(desc(func.sum(SaleItem.quantity)))
             .limit(5)
             .all()
@@ -164,7 +167,7 @@ class DashboardService:
         for product in top_products:
             top_products_data.append(
                 {
-                    "name": product.name,
+                    "name": display_name(product.name, product.brand_name),
                     "total_sold": int(product.total_sold),
                     "total_revenue": float(product.total_revenue),
                 }

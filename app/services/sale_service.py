@@ -5,6 +5,7 @@ from decimal import Decimal
 from datetime import datetime, timedelta
 from app.models.sale import Sale, SaleItem, SaleStatus, PaymentMethod
 from app.models.product_variant import ProductVariant
+from app.models.product import Product
 from app.models.client import Client
 from app.models.employee import Employee
 from app.models.transaction import Transaction, TransactionType
@@ -25,7 +26,7 @@ SALE_DETAILS = (
     selectinload(Sale.items)
     .joinedload(SaleItem.product_variant)
     .options(
-        joinedload(ProductVariant.product),
+        joinedload(ProductVariant.product).joinedload(Product.brand),
         joinedload(ProductVariant.color),
         joinedload(ProductVariant.size),
     ),

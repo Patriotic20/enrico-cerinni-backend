@@ -35,3 +35,12 @@ class Product(Base):
     variants = relationship(
         "ProductVariant", back_populates="product", cascade="all, delete-orphan"
     )
+
+    @property
+    def display_name(self):
+        """Name with the brand in brackets, as shown on sales, carts and reports."""
+        return display_name(self.name, self.brand.name if self.brand else None)
+
+
+def display_name(name, brand_name):
+    return f"{name} ({brand_name})" if brand_name else name

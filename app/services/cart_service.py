@@ -9,6 +9,7 @@ from app.models.cart import Cart, CartItem, CartStatus
 from app.models.client import Client
 from app.models.employee import Employee
 from app.models.product_variant import ProductVariant
+from app.models.product import Product
 from app.schemas.cart import CartCreate
 
 # ponytail: expiry is lazy — stale carts are released whenever a cart list is
@@ -19,7 +20,7 @@ CART_DETAILS = (
     selectinload(Cart.items)
     .joinedload(CartItem.product_variant)
     .options(
-        joinedload(ProductVariant.product),
+        joinedload(ProductVariant.product).joinedload(Product.brand),
         joinedload(ProductVariant.color),
         joinedload(ProductVariant.size),
     ),
@@ -157,7 +158,7 @@ def cart_response(cart: Cart) -> dict:
             "sku": v.sku,
             "stock_quantity": v.stock_quantity,
             "product_id": v.product_id,
-            "product_name": v.product.name,
+            "product_name": v.product.display_name,
             "image_url": v.product.image_url,
             "color_name": v.color.name if v.color else None,
             "color_hex": v.color.hex_code if v.color else None,

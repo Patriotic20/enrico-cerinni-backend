@@ -46,7 +46,7 @@ def _sale_response(sale: Sale) -> SaleResponse:
                 unit_price=item.unit_price,
                 total_price=item.total_price,
                 product_variant_sku=item.product_variant.sku,
-                product_name=item.product_variant.product.name,
+                product_name=item.product_variant.product.display_name,
                 color_name=item.product_variant.color.name,
                 size_name=item.product_variant.size.name,
                 created_at=item.created_at.isoformat(),

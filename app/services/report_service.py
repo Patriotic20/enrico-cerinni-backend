@@ -7,7 +7,8 @@ import json
 
 from app.models.sale import Sale, SaleItem, PaymentMethod, SaleStatus
 from app.models.client import Client
-from app.models.product import Product
+from app.models.product import Product, display_name
+from app.models.brand import Brand
 from app.models.category import Category
 from app.models.product_variant import ProductVariant
 from app.models.size import Size
@@ -116,6 +117,7 @@ class ReportService:
             self.db.query(
                 Product.id,
                 Product.name,
+                Brand.name.label('brand_name'),
                 Size.name.label('size_name'),
                 Color.name.label('color_name'),
                 total_quantity,
@@ -125,6 +127,7 @@ class ReportService:
             .join(Sale, SaleItem.sale_id == Sale.id)
             .join(ProductVariant, SaleItem.product_variant_id == ProductVariant.id)
             .join(Product, ProductVariant.product_id == Product.id)
+            .outerjoin(Brand, Product.brand_id == Brand.id)
             .outerjoin(Size, ProductVariant.size_id == Size.id)
             .outerjoin(Color, ProductVariant.color_id == Color.id)
             .filter(
@@ -132,7 +135,7 @@ class ReportService:
                 Sale.created_at <= end_date,
                 Sale.status != SaleStatus.CANCELLED
             )
-            .group_by(SaleItem.product_variant_id, Product.id, Product.name, Size.name, Color.name)
+            .group_by(SaleItem.product_variant_id, Product.id, Product.name, Brand.name, Size.name, Color.name)
             .order_by(desc('total_quantity'))
             .limit(10)
         )
@@ -140,7 +143,7 @@ class ReportService:
         top_products = [
             TopProduct(
                 product_id=row.id,
-                product_name=row.name,
+                product_name=display_name(row.name, row.brand_name),
                 variant_name=f"{row.size_name or ''} {row.color_name or ''}".strip(),
                 sales_count=int(row.total_quantity),
                 total_revenue=row.total_revenue,
@@ -393,7 +396,7 @@ class ReportService:
             sold = int(sold_by_variant.get(variant.id, 0) or 0)
             return ProductMovement(
                 product_id=variant.product_id,
-                product_name=variant.product.name if variant.product else "Unknown",
+                product_name=variant.product.display_name if variant.product else "Unknown",
                 variant_name=f"{variant.size.name if variant.size else ''} {variant.color.name if variant.color else ''}".strip(),
                 current_stock=variant.stock_quantity,
                 sold_quantity=sold,
