@@ -321,16 +321,16 @@ class SaleService:
         # Update sale status
         sale.status = SaleStatus.CANCELLED
 
-        # Create refund transaction
-        transaction = Transaction(
-            transaction_type=TransactionType.REFUND,
-            amount=-sale.total_amount, # Changed from final_amount to total_amount
-            description=f"Refund for cancelled sale {sale.receipt_number}",
-            sale_id=sale.id,
-            client_id=sale.client_id,
-            user_id=current_user.id,
-        )
-        self.db.add(transaction)
+        # Refund only the money actually taken; an unpaid debt sale refunds nothing.
+        if sale.paid_amount > 0:
+            self.db.add(Transaction(
+                transaction_type=TransactionType.REFUND,
+                amount=-sale.paid_amount,
+                description=f"Refund for cancelled sale {sale.receipt_number}",
+                sale_id=sale.id,
+                client_id=sale.client_id,
+                user_id=current_user.id,
+            ))
 
         self.db.commit()
         return self.get_sale(sale.id)
